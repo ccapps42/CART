@@ -8,7 +8,7 @@
 
 ## Overview
 
-CART is a novel recurrent-depth transformer architecture designed for systematic study on consumer GPU hardware. Rather than stacking N unique transformer layers, CART loops a single shared-weight core block R times. The core block cross-attends to a fixed prelude output at every iteration — anchoring each reasoning pass to the original context rather than allowing the hidden state to drift.
+CART is a novel recurrent-depth transformer architecture designed for systematic study on consumer GPU hardware. The architecture combines MLA cross-attention with KV reuse across loop iterations, LTI stability constraints, loop index embeddings, and hyper-connected residual streams within a shared-weight recurrent core — a combination that has not previously appeared in the literature. Individual components draw on published prior work (see Acknowledgements), but the architectural integration, the cross-attention formulation anchoring the loop to a fixed prelude output, and the empirical characterization of the prelude/core/coda ratio across model scales are original contributions.
 
 This design separates three distinct responsibilities:
 
@@ -223,11 +223,11 @@ MIT License. See [LICENSE](LICENSE) for details.
 
 ## Acknowledgements
 
-CART draws on ideas from several published works:
+CART is an original architecture by Chad Capps. The following published works informed individual components:
 
 - **Parcae** — LTI stability via spectral radius constraint
-- **Hyperloop Transformer** (MIT, 2026) — prelude/core/coda structure and hyper-connections
+- **Hyperloop Transformer** (MIT, 2026) — prelude/core/coda structural organization and hyper-connections at loop boundaries
 - **OpenMythos** (kyegomez) — loop index embedding (LIE)
 - **DeepSeek-V2** — Multi-head Latent Attention (MLA)
 
-All experimental results, sweep infrastructure, and trained weights are original work by Chad Capps.
+The specific combination of these elements — in particular the cross-attention formulation anchoring the recurrent loop to a fixed prelude output with KV reuse, the integration of LTI stability with hyper-connections and LIE within a single shared-weight core, and the systematic empirical characterization of the prelude depth / loop count / model dimension interaction — represents original work not present in any of the above papers individually or in combination.
