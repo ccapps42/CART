@@ -223,11 +223,11 @@ MIT License. See [LICENSE](LICENSE) for details.
 
 ## Acknowledgements
 
-CART is an original architecture by Chad Capps. The following published works informed individual components:
+CART is an original architecture designed and developed by **Chad Capps**. The following published works informed individual components:
 
 - **Parcae** — LTI stability via spectral radius constraint
 - **Hyperloop Transformer** (MIT, 2026) — prelude/core/coda structural organization and hyper-connections at loop boundaries
 - **OpenMythos** (kyegomez) — loop index embedding (LIE)
 - **DeepSeek-V2** — Multi-head Latent Attention (MLA)
 
-The specific combination of these elements — in particular the cross-attention formulation anchoring the recurrent loop to a fixed prelude output with KV reuse, the integration of LTI stability with hyper-connections and LIE within a single shared-weight core, and the systematic empirical characterization of the prelude depth / loop count / model dimension interaction — represents original work not present in any of the above papers individually or in combination.
+The architectural combination presented here — including the cross-attention formulation anchoring the recurrent loop to a fixed prelude output with KV reuse across loop iterations, the integration of LTI stability, LIE, and hyper-connections within a single shared-weight core, and the empirical characterization of the prelude depth / loop count / model dimension interaction — is the original work of Chad Capps and does not appear in any of the above papers individually or in combination. All sweep infrastructure, experimental results, and trained weights are original work by Chad Capps.
