@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Large binary data files (regenerate with data/build_bins.py)
+data/*.bin
+data/val/*.bin
+data/hf_cache/
+
+# Model checkpoints
+checkpoints/
+
+# SQLite (commit after sweep completes)
+*.db
+*.db-shm
+*.db-wal
+
+# Generated figures (regenerate with plot/plot_sweep.py)
+figures/
+
+# Generated sweep outputs
+sweep/stage2_configs.json
+
+# Claude Code settings
+.claude/

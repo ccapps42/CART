@@ -1,0 +1,8 @@
+{
+  "shard_index": 97,
+  "shard_file": "fineweb-edu-train-00097-of-00098.arrow",
+  "total_docs_in_shard": 68101,
+  "random_seed": 42,
+  "selection": "Docs shuffled with seed 42, first N until 500k tokens",
+  "tokenizer": "NousResearch/Llama-2-7b-hf"
+}

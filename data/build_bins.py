@@ -1,0 +1,297 @@
+"""
+Run this script ONCE before starting any sweep.
+Produces fixed .bin files consumed by all training runs.
+
+Usage:
+    python data/tokenize.py --output-dir data/
+
+Output (training bins in --output-dir, val bins in --output-dir/val/):
+    data/tinystories_train.bin  — Stage 1 training data
+    data/stage2_train.bin       — Stage 2 training blend (30/30/40)
+    data/val/tinystories_val.bin
+    data/val/wikipedia_val.bin  — Wikipedia shard 40 held out
+    data/val/fineweb_edu_val.bin — FineWeb-Edu shard 97, seed 42
+
+Tokenizer: NousResearch/Llama-2-7b-hf (public mirror, 32k BPE)
+Note: spec named microsoft/phi-2 but phi-2 uses ~51k vocab. Llama-2
+      tokenizer has exactly 32,000 tokens and is the correct match.
+"""
+
+import argparse
+import json
+import sys
+from pathlib import Path
+
+import numpy as np
+from datasets import Dataset, concatenate_datasets
+from tqdm import tqdm
+from transformers import AutoTokenizer
+
+# ---------------------------------------------------------------------------
+# Paths
+# ---------------------------------------------------------------------------
+HF_CACHE_BASE = Path("K:/projects/OpenHobbs/data/hf_cache")
+
+TINYSTORIES_DIR = (HF_CACHE_BASE /
+    "roneneldan___tiny_stories/default/0.0.0"
+    "/f54c09fd23315a6f9c86f9dc80f725de7d8f9c64")
+
+WIKIPEDIA_DIR = (HF_CACHE_BASE /
+    "wikimedia___wikipedia/20231101.en/0.0.0"
+    "/b04c8d1ceb2f5cd4588862100d08de323dccfbaa")
+
+FINEWEB_DIR = (HF_CACHE_BASE /
+    "HuggingFaceFW___fineweb-edu/sample-10BT/0.0.0"
+    "/87f09149ef4734204d70ed1d046ddc9ca3f2b8f9")
+
+# ---------------------------------------------------------------------------
+# Tokenizer
+# ---------------------------------------------------------------------------
+TOKENIZER_NAME = "NousResearch/Llama-2-7b-hf"
+
+# ---------------------------------------------------------------------------
+# Token budget targets
+# ---------------------------------------------------------------------------
+TARGET_TRAIN_TOKENS = 100_000_000   # 100M tokens for tinystories_train.bin
+TARGET_VAL_TOKENS   =     500_000   # 500k tokens per val set
+# Stage 2: 30M + 30M + 40M = 100M interleaved
+STAGE2_TINY_TOKENS     = 30_000_000
+STAGE2_WIKI_TOKENS     = 30_000_000
+STAGE2_FINEWEB_TOKENS  = 40_000_000
+
+# Wikipedia holdout: shard 40 (last shard, 28,288 docs)
+WIKI_VAL_SHARD = 40
+# FineWeb holdout: shard 97 (last shard), random seed
+FINEWEB_VAL_SHARD = 97
+FINEWEB_VAL_SEED  = 42
+
+SEQ_LEN_INTERLEAVE = 512  # chunk size for stage2 interleaving
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def encode_texts(tokenizer, texts, max_tokens: int, desc: str) -> np.ndarray:
+    """
+    Tokenize an iterable of texts, prepend BOS + append EOS per doc.
+    Returns flat uint16 array capped at max_tokens.
+    """
+    bos = tokenizer.bos_token_id
+    eos = tokenizer.eos_token_id
+    out = []
+    total = 0
+    for text in tqdm(texts, desc=desc, unit="docs", dynamic_ncols=True):
+        if total >= max_tokens:
+            break
+        if not text or not text.strip():
+            continue
+        ids = tokenizer.encode(text, add_special_tokens=False)
+        doc = [bos] + ids + [eos]
+        remaining = max_tokens - total
+        out.append(np.array(doc[:remaining], dtype=np.uint16))
+        total += len(doc)
+        if total >= max_tokens:
+            break
+    if not out:
+        return np.array([], dtype=np.uint16)
+    return np.concatenate(out)
+
+
+def write_bin(path: Path, tokens: np.ndarray):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tokens.astype(np.uint16).tofile(str(path))
+    mb = tokens.nbytes / 1e6
+    print(f"  -> {path}  [{len(tokens):,} tokens, {mb:.1f} MB]")
+
+
+def load_shard(shard_path: Path) -> Dataset:
+    if not shard_path.exists():
+        raise FileNotFoundError(f"Missing shard: {shard_path}")
+    return Dataset.from_file(str(shard_path))
+
+
+def interleave_stage2(
+    tiny: np.ndarray,
+    wiki: np.ndarray,
+    fineweb: np.ndarray,
+    chunk: int = SEQ_LEN_INTERLEAVE,
+) -> np.ndarray:
+    """
+    Interleave three token arrays in 30/30/40 proportions.
+    Every 10 chunks: 3 tiny, 3 wiki, 4 fineweb.
+    Stops when any source is exhausted.
+    """
+    # cycle: 0=tiny, 1=wiki, 2=fineweb
+    schedule = [0, 0, 0, 1, 1, 1, 2, 2, 2, 2]
+    sources = [tiny, wiki, fineweb]
+    pos = [0, 0, 0]
+    parts = []
+    i = 0
+    while True:
+        src = schedule[i % 10]
+        p = pos[src]
+        if p + chunk > len(sources[src]):
+            break
+        parts.append(sources[src][p: p + chunk])
+        pos[src] += chunk
+        i += 1
+    if not parts:
+        return np.array([], dtype=np.uint16)
+    result = np.concatenate(parts)
+    print(f"  Stage2 total: {len(result):,} tokens  "
+          f"({pos[0]:,} tiny / {pos[1]:,} wiki / {pos[2]:,} fineweb)")
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--output-dir", default="data/",
+                        help="Base output directory (val/ subfolder created inside)")
+    args = parser.parse_args()
+
+    out_dir = Path(args.output_dir)
+    val_dir = out_dir / "val"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    val_dir.mkdir(parents=True, exist_ok=True)
+
+    print(f"Output dir : {out_dir.resolve()}")
+    print(f"Val dir    : {val_dir.resolve()}")
+
+    # --- Tokenizer ---
+    print(f"\nLoading tokenizer: {TOKENIZER_NAME}")
+    tokenizer = AutoTokenizer.from_pretrained(TOKENIZER_NAME)
+    assert tokenizer.vocab_size == 32_000, (
+        f"vocab_size mismatch: expected 32000, got {tokenizer.vocab_size}")
+    print(f"  vocab_size={tokenizer.vocab_size}  "
+          f"bos={tokenizer.bos_token_id}  eos={tokenizer.eos_token_id}")
+
+    # ==================================================================
+    # 1. TinyStories — train
+    # ==================================================================
+    print("\n[1/5] TinyStories train  (target: 100M tokens)")
+    ts_train_paths = sorted(TINYSTORIES_DIR.glob("tiny_stories-train-*.arrow"))
+    ts_train = concatenate_datasets([load_shard(p) for p in ts_train_paths])
+    print(f"  {len(ts_train):,} docs across {len(ts_train_paths)} shards")
+    ts_train_tokens = encode_texts(
+        tokenizer, ts_train["text"], TARGET_TRAIN_TOKENS, "TinyStories train")
+    write_bin(out_dir / "tinystories_train.bin", ts_train_tokens)
+
+    # ==================================================================
+    # 2. TinyStories — val
+    # ==================================================================
+    print("\n[2/5] TinyStories val  (target: 500k tokens)")
+    ts_val_path = TINYSTORIES_DIR / "tiny_stories-validation.arrow"
+    ts_val = load_shard(ts_val_path)
+    print(f"  {len(ts_val):,} val docs")
+    ts_val_tokens = encode_texts(
+        tokenizer, ts_val["text"], TARGET_VAL_TOKENS, "TinyStories val")
+    write_bin(val_dir / "tinystories_val.bin", ts_val_tokens)
+
+    # ==================================================================
+    # 3. Wikipedia — val (shard 40 held out)
+    # ==================================================================
+    print(f"\n[3/5] Wikipedia val  (shard {WIKI_VAL_SHARD}, target: 500k tokens)")
+    wiki_val_path = WIKIPEDIA_DIR / f"wikipedia-train-{WIKI_VAL_SHARD:05d}-of-00041.arrow"
+    wiki_val_shard = load_shard(wiki_val_path)
+    print(f"  Shard {WIKI_VAL_SHARD} has {len(wiki_val_shard):,} docs")
+    wiki_val_tokens = encode_texts(
+        tokenizer, wiki_val_shard["text"], TARGET_VAL_TOKENS, "Wikipedia val")
+    # Record holdout metadata
+    sample_titles = [wiki_val_shard[i]["title"] for i in range(min(20, len(wiki_val_shard)))]
+    with open(val_dir / "wikipedia_val_meta.json", "w", encoding="utf-8") as f:
+        json.dump({
+            "shard_index": WIKI_VAL_SHARD,
+            "shard_file": wiki_val_path.name,
+            "total_docs_in_shard": len(wiki_val_shard),
+            "selection": "First N docs until 500k tokens reached",
+            "first_20_titles": sample_titles,
+            "tokenizer": TOKENIZER_NAME,
+        }, f, indent=2, ensure_ascii=False)
+    write_bin(val_dir / "wikipedia_val.bin", wiki_val_tokens)
+    print(f"  Holdout metadata -> {val_dir / 'wikipedia_val_meta.json'}")
+
+    # ==================================================================
+    # 4. FineWeb-Edu — val (shard 97, seed 42, held out)
+    # ==================================================================
+    print(f"\n[4/5] FineWeb-Edu val  (shard {FINEWEB_VAL_SHARD}, seed={FINEWEB_VAL_SEED}, target: 500k tokens)")
+    fineweb_val_path = FINEWEB_DIR / f"fineweb-edu-train-{FINEWEB_VAL_SHARD:05d}-of-00098.arrow"
+    fineweb_val_shard = load_shard(fineweb_val_path)
+    print(f"  Shard {FINEWEB_VAL_SHARD} has {len(fineweb_val_shard):,} docs")
+    import random
+    rng = random.Random(FINEWEB_VAL_SEED)
+    indices = list(range(len(fineweb_val_shard)))
+    rng.shuffle(indices)
+    fw_val_texts = (fineweb_val_shard[i]["text"] for i in indices)
+    fw_val_tokens = encode_texts(
+        tokenizer, fw_val_texts, TARGET_VAL_TOKENS, "FineWeb-Edu val")
+    with open(val_dir / "fineweb_edu_val_meta.json", "w", encoding="utf-8") as f:
+        json.dump({
+            "shard_index": FINEWEB_VAL_SHARD,
+            "shard_file": fineweb_val_path.name,
+            "total_docs_in_shard": len(fineweb_val_shard),
+            "random_seed": FINEWEB_VAL_SEED,
+            "selection": f"Docs shuffled with seed {FINEWEB_VAL_SEED}, first N until 500k tokens",
+            "tokenizer": TOKENIZER_NAME,
+        }, f, indent=2)
+    write_bin(val_dir / "fineweb_edu_val.bin", fw_val_tokens)
+    print(f"  Holdout metadata -> {val_dir / 'fineweb_edu_val_meta.json'}")
+
+    # ==================================================================
+    # 5. Stage 2 blend (30/30/40 interleaved)
+    # ==================================================================
+    print("\n[5/5] Stage 2 training blend  (30% tiny / 30% wiki / 40% fineweb, 100M tokens)")
+
+    # TinyStories portion (already tokenized — slice from train tokens)
+    print("  Slicing TinyStories for stage2...")
+    stage2_tiny = ts_train_tokens[:STAGE2_TINY_TOKENS]
+
+    # Wikipedia — use shard 0 (shard 40 held out so this is clean)
+    print("  Encoding Wikipedia shard 0 for stage2...")
+    wiki_s0_path = WIKIPEDIA_DIR / "wikipedia-train-00000-of-00041.arrow"
+    wiki_s0 = load_shard(wiki_s0_path)
+    print(f"  Wikipedia shard 0: {len(wiki_s0):,} docs")
+    stage2_wiki = encode_texts(
+        tokenizer, wiki_s0["text"], STAGE2_WIKI_TOKENS, "Wiki stage2")
+
+    # FineWeb-Edu — use shard 0 (shard 97 held out so this is clean)
+    print("  Encoding FineWeb-Edu shard 0 for stage2...")
+    fw_s0_path = FINEWEB_DIR / "fineweb-edu-train-00000-of-00098.arrow"
+    fw_s0 = load_shard(fw_s0_path)
+    print(f"  FineWeb-Edu shard 0: {len(fw_s0):,} docs")
+    stage2_fineweb = encode_texts(
+        tokenizer, fw_s0["text"], STAGE2_FINEWEB_TOKENS, "FineWeb stage2")
+
+    # Interleave
+    print("  Interleaving in 30/30/40 chunks...")
+    stage2_tokens = interleave_stage2(stage2_tiny, stage2_wiki, stage2_fineweb)
+    write_bin(out_dir / "stage2_train.bin", stage2_tokens)
+
+    # ==================================================================
+    # Summary
+    # ==================================================================
+    print("\n=== Tokenization complete ===")
+    files = [
+        out_dir / "tinystories_train.bin",
+        out_dir / "stage2_train.bin",
+        val_dir / "tinystories_val.bin",
+        val_dir / "wikipedia_val.bin",
+        val_dir / "fineweb_edu_val.bin",
+    ]
+    for f in files:
+        if f.exists():
+            tokens = np.memmap(str(f), dtype=np.uint16, mode='r')
+            print(f"  {f.name:<30s}  {len(tokens):>12,} tokens")
+        else:
+            print(f"  {f.name:<30s}  MISSING")
+
+    print(f"\nTokenizer: {TOKENIZER_NAME}")
+    print("Record this in sweep_meta table before running any sweep.")
+
+
+if __name__ == "__main__":
+    main()

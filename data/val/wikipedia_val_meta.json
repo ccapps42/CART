@@ -1,0 +1,29 @@
+{
+  "shard_index": 40,
+  "shard_file": "wikipedia-train-00040-of-00041.arrow",
+  "total_docs_in_shard": 28288,
+  "selection": "First N docs until 500k tokens reached",
+  "first_20_titles": [
+    "Team Abramoff",
+    "Peter Brocco",
+    "Spirit Squad",
+    "Peter Biddle",
+    "Chembra Peak",
+    "Seligmannite",
+    "Ovda",
+    "Long Beach City College",
+    "Toivo Kuula",
+    "Buckley Park College",
+    "Violin Concerto (Barber)",
+    "Non-bank subsidiary",
+    "Ask a Policeman",
+    "Jade (river)",
+    "George Kunz",
+    "Johnny Lindsay",
+    "Tufty Mann",
+    "Internet Gambling Prohibition Act",
+    "The Road Goes Ever On (song)",
+    "Athol Rowan"
+  ],
+  "tokenizer": "NousResearch/Llama-2-7b-hf"
+}
