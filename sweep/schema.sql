@@ -21,6 +21,7 @@ CREATE TABLE IF NOT EXISTS configs (
     stage        INTEGER NOT NULL DEFAULT 1,
     status       TEXT NOT NULL DEFAULT 'pending',
     hardware     TEXT NOT NULL,    -- '3050' or '3090'
+    model_type   TEXT NOT NULL DEFAULT 'cart',  -- 'cart' or 'dense'
     retry_count  INTEGER NOT NULL DEFAULT 0,
     error_msg    TEXT,
     created_at   TEXT NOT NULL,
