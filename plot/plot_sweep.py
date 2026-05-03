@@ -22,7 +22,7 @@ import matplotlib.pyplot as plt
 import matplotlib.cm as cm
 import numpy as np
 
-EVAL_STEP = 1500    # final eval step for main comparison figures
+EVAL_STEP = 3000    # final eval step for main comparison figures
 STAGE = 1
 
 

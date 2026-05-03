@@ -2,7 +2,7 @@
 Stage 1 -> Stage 2 zoom-and-confirm protocol.
 
 For each dim size independently:
-    1. Rank all complete Stage 1 configs by eval_ppl_tiny at step 1500
+    1. Rank all complete Stage 1 configs by eval_ppl_tiny at step 3000
     2. Identify best n_loops and best n_prelude independently
     3. Apply boundary rule: if best is at edge of range, extend outward
        (e.g., if best n_loops = 8, add n_loops = 10)
@@ -25,7 +25,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 LOOPS_GRID   = [2, 4, 6, 8]    # Stage 1 sweep values
 PRELUDES_GRID = [2, 3, 4, 6]   # Stage 1 sweep values
 STAGE2_SEEDS = [42, 137, 271]
-STAGE2_EVAL_STEP = 1500         # rank by perplexity at this step
+STAGE2_EVAL_STEP = 3000         # rank by perplexity at this step
 
 
 def config_id(d_model, n_loops, n_prelude, seed, stage):
@@ -112,6 +112,15 @@ def analyze_dim(conn, d_model: int) -> dict:
     # Stage 2 config proposals
     r_vals = neighbors(LOOPS_GRID, best_r)
     p_vals = neighbors(PRELUDES_GRID, best_p)
+
+    # R=8 is the grid edge — always extend to R=10 if R=8 is in the candidate set,
+    # regardless of whether R=8 or R=6 won. We can't know where the curve flattens
+    # without testing one step beyond the edge.
+    r_max = LOOPS_GRID[-1]
+    if r_max in r_vals and (r_max + 2) not in r_vals:
+        r_vals.append(r_max + 2)
+        print(f"  ** R={r_max} is at grid edge — extending Stage 2 to R={r_max + 2}")
+
     print(f"  Stage 2 n_loops candidates:   {r_vals}")
     print(f"  Stage 2 n_prelude candidates: {p_vals}")
 

@@ -57,7 +57,7 @@ CREATE TABLE IF NOT EXISTS train_log (
 );
 -- train_log is the source of loss curve figures.
 -- Written every 50 steps. Lightweight — no eval, no VRAM measurement.
--- results table is written only at eval checkpoints (steps 500, 1500, etc.)
+-- results table is written only at eval checkpoints (steps 500, 1000, 1500, 2000, 2500, 3000)
 
 CREATE INDEX IF NOT EXISTS idx_results_config   ON results(config_id, step);
 CREATE INDEX IF NOT EXISTS idx_train_log_config ON train_log(config_id, step);

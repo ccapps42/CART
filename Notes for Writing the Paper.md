@@ -98,7 +98,7 @@ Fix: gradient checkpointing disabled entirely. VRAM fits all configs without it 
 
 Mixed data (`stage2_train.bin`) is used for all configs at all scales. Reason: d=768 (~50M params) trained on TinyStories-only showed training loss collapse to 0.09 by step 1750 — the model memorized the repetitive synthetic dataset. Mixed data (30% TinyStories / 30% Wikipedia / 40% FineWeb-Edu, 100M tokens interleaved) prevents memorization and produces meaningful ppl_wiki and ppl_edu signals at all scales.
 
-**All configs:** 3000 steps, stage2_train.bin, EVAL_INTERVAL=500. Eval checkpoints at steps 500, 1000, 1500, 2000, 2500, 3000 for every config. ppl_tiny, ppl_wiki, and ppl_edu are all directly comparable across d values. Use step-1500 as the primary cross-scale comparison point.
+**All configs:** 3000 steps, stage2_train.bin, EVAL_INTERVAL=500. Eval checkpoints at steps 500, 1000, 1500, 2000, 2500, 3000 for every config. ppl_tiny, ppl_wiki, and ppl_edu are all directly comparable across d values. Use step-3000 as the primary cross-scale comparison point.
 
 ---
 
@@ -288,4 +288,4 @@ Do not claim both simultaneously without clearly separating them. Reviewers will
 
 - **The model learns the approximately optimal spectral radius:** For a given R, the ρ where the last loop still contributes 50% as much as the first is ρ = 0.5^(1/R). For R=6 this gives ρ = 0.891 — essentially exactly what the model learned (~0.892). The sweep trains over R=2,4,6,8 equally, so the learned ρ settles at the equilibrium that works well across the full range of loop counts. There is also a slight upward trend in ρ with R (d=512: R=2 configs average ~0.8915, R=8 configs average ~0.8936) — higher R allows slower convergence, so the model pushes ρ slightly higher when it has more loops available. The trend is small (~0.002 across R=2 to R=8) but consistent with theory. **Discuss in paper: the LTI formulation lets the model discover the optimal memory timescale for its compute budget without supervision. This is a stronger claim than just "the recurrence is stable" — it's that the training dynamics find the right ρ automatically.** ⚠ Confirm the R-vs-ρ trend holds at d=768 and d=1024 when complete.
 
-- **Cross-scale comparison:** All configs use identical training setup (mixed data, 3000 steps, eval at 500/1000/1500/2000/2500/3000). ppl_tiny, ppl_wiki, and ppl_edu are all directly comparable across d values. Use step-1500 as the primary cross-scale comparison point.
+- **Cross-scale comparison:** All configs use identical training setup (mixed data, 3000 steps, eval at 500/1000/1500/2000/2500/3000). ppl_tiny, ppl_wiki, and ppl_edu are all directly comparable across d values. Use step-3000 as the primary cross-scale comparison point.
