@@ -191,6 +191,9 @@ def main():
     parser.add_argument("--db", default="results.db")
     parser.add_argument("--max-steps", type=int, default=None,
                         help="Override total training steps (for testing only)")
+    parser.add_argument("--ckpt-interval", type=int, default=None,
+                        help="Save a checkpoint every N steps (in addition to final). "
+                             "Default None = final step only. Use for Stage 2 long runs.")
     parser.add_argument("--train-bin", default=None,
                         help="Override training .bin path (for testing only)")
     parser.add_argument("--val-dir", default=None,
@@ -211,6 +214,7 @@ def main():
     config_id = args.config_id
 
     total_steps = args.max_steps if args.max_steps else TOTAL_STEPS
+    ckpt_interval = args.ckpt_interval
 
     try:
         mark_running(conn, config_id)
@@ -364,6 +368,11 @@ def main():
                 last_ppl_tiny = ppl_tiny
                 if device.type == "cuda":
                     torch.cuda.reset_peak_memory_stats()
+
+            # --- Intermediate checkpoint ---
+            if ckpt_interval and step % ckpt_interval == 0 and step < total_steps:
+                ckpt_path = save_checkpoint(model, optimizer, step, config_id)
+                print(f"  Checkpoint saved: {ckpt_path}")
 
         # --- Save final checkpoint ---
         ckpt_path = save_checkpoint(model, optimizer, total_steps, config_id)
