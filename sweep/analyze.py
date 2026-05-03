@@ -112,6 +112,15 @@ def analyze_dim(conn, d_model: int) -> dict:
     # Stage 2 config proposals
     r_vals = neighbors(LOOPS_GRID, best_r)
     p_vals = neighbors(PRELUDES_GRID, best_p)
+
+    # R=8 is the grid edge — always extend to R=10 if R=8 is in the candidate set,
+    # regardless of whether R=8 or R=6 won. We can't know where the curve flattens
+    # without testing one step beyond the edge.
+    r_max = LOOPS_GRID[-1]
+    if r_max in r_vals and (r_max + 2) not in r_vals:
+        r_vals.append(r_max + 2)
+        print(f"  ** R={r_max} is at grid edge — extending Stage 2 to R={r_max + 2}")
+
     print(f"  Stage 2 n_loops candidates:   {r_vals}")
     print(f"  Stage 2 n_prelude candidates: {p_vals}")
 
