@@ -3,7 +3,11 @@ Run this script ONCE before starting any sweep.
 Produces fixed .bin files consumed by all training runs.
 
 Usage:
-    python data/tokenize.py --output-dir data/
+    # Full build (Stage 1 + Stage 2 data):
+    python data/build_bins.py --output-dir data/
+
+    # Stage 2 data only — safe to run while Stage 1 is active:
+    python data/build_bins.py --stage2-only --stage2-out data/
 
 Output (training bins in --output-dir, val bins in --output-dir/val/):
     data/tinystories_train.bin  — Stage 1 training data
@@ -158,16 +162,27 @@ def interleave_stage2(
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--output-dir", default="data/",
-                        help="Base output directory (val/ subfolder created inside)")
+                        help="Base output directory for full build (val/ subfolder created inside)")
+    parser.add_argument("--stage2-only", action="store_true",
+                        help="Build only stage2_train.bin; skip Stage 1 and val files")
+    parser.add_argument("--stage2-out", default=None,
+                        help="Directory for stage2_train.bin when using --stage2-only "
+                             "(defaults to --output-dir if not set)")
     args = parser.parse_args()
 
-    out_dir = Path(args.output_dir)
-    val_dir = out_dir / "val"
-    out_dir.mkdir(parents=True, exist_ok=True)
-    val_dir.mkdir(parents=True, exist_ok=True)
+    out_dir    = Path(args.output_dir)
+    stage2_dir = Path(args.stage2_out) if args.stage2_out else out_dir
+    val_dir    = out_dir / "val"
 
-    print(f"Output dir : {out_dir.resolve()}")
-    print(f"Val dir    : {val_dir.resolve()}")
+    if args.stage2_only:
+        stage2_dir.mkdir(parents=True, exist_ok=True)
+        print(f"Mode       : stage2-only")
+        print(f"Stage2 out : {stage2_dir.resolve()}")
+    else:
+        out_dir.mkdir(parents=True, exist_ok=True)
+        val_dir.mkdir(parents=True, exist_ok=True)
+        print(f"Output dir : {out_dir.resolve()}")
+        print(f"Val dir    : {val_dir.resolve()}")
 
     # --- Tokenizer ---
     print(f"\nLoading tokenizer: {TOKENIZER_NAME}")
@@ -177,91 +192,100 @@ def main():
     print(f"  vocab_size={tokenizer.vocab_size}  "
           f"bos={tokenizer.bos_token_id}  eos={tokenizer.eos_token_id}")
 
-    # ==================================================================
-    # 1. TinyStories — train
-    # ==================================================================
-    print(f"\n[1/5] TinyStories train  (encoding up to {STAGE2_TINY_TOKENS//1_000_000}M tokens "
-          f"— first {TARGET_TRAIN_TOKENS//1_000_000}M written to tinystories_train.bin, "
-          f"remainder used for stage2 blend)")
-    ts_train_paths = sorted(TINYSTORIES_DIR.glob("tiny_stories-train-*.arrow"))
-    ts_train = concatenate_datasets([load_shard(p) for p in ts_train_paths])
-    print(f"  {len(ts_train):,} docs across {len(ts_train_paths)} shards")
-    # Encode up to STAGE2_TINY_TOKENS so the full amount is available for the stage2 blend.
-    # tinystories_train.bin (Stage 1) gets only the first TARGET_TRAIN_TOKENS (100M).
-    ts_train_tokens = encode_texts(
-        tokenizer, ts_train["text"], STAGE2_TINY_TOKENS, "TinyStories train")
-    print(f"  Total TinyStories tokens encoded: {len(ts_train_tokens):,}")
-    write_bin(out_dir / "tinystories_train.bin", ts_train_tokens[:TARGET_TRAIN_TOKENS])
+    if not args.stage2_only:
+        # ==============================================================
+        # 1. TinyStories — train
+        # ==============================================================
+        print(f"\n[1/5] TinyStories train  (encoding up to {STAGE2_TINY_TOKENS//1_000_000}M tokens "
+              f"— first {TARGET_TRAIN_TOKENS//1_000_000}M written to tinystories_train.bin, "
+              f"remainder used for stage2 blend)")
+        ts_train_paths = sorted(TINYSTORIES_DIR.glob("tiny_stories-train-*.arrow"))
+        ts_train = concatenate_datasets([load_shard(p) for p in ts_train_paths])
+        print(f"  {len(ts_train):,} docs across {len(ts_train_paths)} shards")
+        # Encode up to STAGE2_TINY_TOKENS so the full amount is available for the stage2 blend.
+        # tinystories_train.bin (Stage 1) gets only the first TARGET_TRAIN_TOKENS (100M).
+        ts_train_tokens = encode_texts(
+            tokenizer, ts_train["text"], STAGE2_TINY_TOKENS, "TinyStories train")
+        print(f"  Total TinyStories tokens encoded: {len(ts_train_tokens):,}")
+        write_bin(out_dir / "tinystories_train.bin", ts_train_tokens[:TARGET_TRAIN_TOKENS])
 
-    # ==================================================================
-    # 2. TinyStories — val
-    # ==================================================================
-    print("\n[2/5] TinyStories val  (target: 500k tokens)")
-    ts_val_path = TINYSTORIES_DIR / "tiny_stories-validation.arrow"
-    ts_val = load_shard(ts_val_path)
-    print(f"  {len(ts_val):,} val docs")
-    ts_val_tokens = encode_texts(
-        tokenizer, ts_val["text"], TARGET_VAL_TOKENS, "TinyStories val")
-    write_bin(val_dir / "tinystories_val.bin", ts_val_tokens)
+        # ==============================================================
+        # 2. TinyStories — val
+        # ==============================================================
+        print("\n[2/5] TinyStories val  (target: 500k tokens)")
+        ts_val_path = TINYSTORIES_DIR / "tiny_stories-validation.arrow"
+        ts_val = load_shard(ts_val_path)
+        print(f"  {len(ts_val):,} val docs")
+        ts_val_tokens = encode_texts(
+            tokenizer, ts_val["text"], TARGET_VAL_TOKENS, "TinyStories val")
+        write_bin(val_dir / "tinystories_val.bin", ts_val_tokens)
 
-    # ==================================================================
-    # 3. Wikipedia — val (shard 40 held out)
-    # ==================================================================
-    print(f"\n[3/5] Wikipedia val  (shard {WIKI_VAL_SHARD}, target: 500k tokens)")
-    wiki_val_path = WIKIPEDIA_DIR / f"wikipedia-train-{WIKI_VAL_SHARD:05d}-of-00041.arrow"
-    wiki_val_shard = load_shard(wiki_val_path)
-    print(f"  Shard {WIKI_VAL_SHARD} has {len(wiki_val_shard):,} docs")
-    wiki_val_tokens = encode_texts(
-        tokenizer, wiki_val_shard["text"], TARGET_VAL_TOKENS, "Wikipedia val")
-    # Record holdout metadata
-    sample_titles = [wiki_val_shard[i]["title"] for i in range(min(20, len(wiki_val_shard)))]
-    with open(val_dir / "wikipedia_val_meta.json", "w", encoding="utf-8") as f:
-        json.dump({
-            "shard_index": WIKI_VAL_SHARD,
-            "shard_file": wiki_val_path.name,
-            "total_docs_in_shard": len(wiki_val_shard),
-            "selection": "First N docs until 500k tokens reached",
-            "first_20_titles": sample_titles,
-            "tokenizer": TOKENIZER_NAME,
-        }, f, indent=2, ensure_ascii=False)
-    write_bin(val_dir / "wikipedia_val.bin", wiki_val_tokens)
-    print(f"  Holdout metadata -> {val_dir / 'wikipedia_val_meta.json'}")
+        # ==============================================================
+        # 3. Wikipedia — val (shard 40 held out)
+        # ==============================================================
+        print(f"\n[3/5] Wikipedia val  (shard {WIKI_VAL_SHARD}, target: 500k tokens)")
+        wiki_val_path = WIKIPEDIA_DIR / f"wikipedia-train-{WIKI_VAL_SHARD:05d}-of-00041.arrow"
+        wiki_val_shard = load_shard(wiki_val_path)
+        print(f"  Shard {WIKI_VAL_SHARD} has {len(wiki_val_shard):,} docs")
+        wiki_val_tokens = encode_texts(
+            tokenizer, wiki_val_shard["text"], TARGET_VAL_TOKENS, "Wikipedia val")
+        sample_titles = [wiki_val_shard[i]["title"] for i in range(min(20, len(wiki_val_shard)))]
+        with open(val_dir / "wikipedia_val_meta.json", "w", encoding="utf-8") as f:
+            json.dump({
+                "shard_index": WIKI_VAL_SHARD,
+                "shard_file": wiki_val_path.name,
+                "total_docs_in_shard": len(wiki_val_shard),
+                "selection": "First N docs until 500k tokens reached",
+                "first_20_titles": sample_titles,
+                "tokenizer": TOKENIZER_NAME,
+            }, f, indent=2, ensure_ascii=False)
+        write_bin(val_dir / "wikipedia_val.bin", wiki_val_tokens)
+        print(f"  Holdout metadata -> {val_dir / 'wikipedia_val_meta.json'}")
 
-    # ==================================================================
-    # 4. FineWeb-Edu — val (shard 97, seed 42, held out)
-    # ==================================================================
-    print(f"\n[4/5] FineWeb-Edu val  (shard {FINEWEB_VAL_SHARD}, seed={FINEWEB_VAL_SEED}, target: 500k tokens)")
-    fineweb_val_path = FINEWEB_DIR / f"fineweb-edu-train-{FINEWEB_VAL_SHARD:05d}-of-00098.arrow"
-    fineweb_val_shard = load_shard(fineweb_val_path)
-    print(f"  Shard {FINEWEB_VAL_SHARD} has {len(fineweb_val_shard):,} docs")
-    import random
-    rng = random.Random(FINEWEB_VAL_SEED)
-    indices = list(range(len(fineweb_val_shard)))
-    rng.shuffle(indices)
-    fw_val_texts = (fineweb_val_shard[i]["text"] for i in indices)
-    fw_val_tokens = encode_texts(
-        tokenizer, fw_val_texts, TARGET_VAL_TOKENS, "FineWeb-Edu val")
-    with open(val_dir / "fineweb_edu_val_meta.json", "w", encoding="utf-8") as f:
-        json.dump({
-            "shard_index": FINEWEB_VAL_SHARD,
-            "shard_file": fineweb_val_path.name,
-            "total_docs_in_shard": len(fineweb_val_shard),
-            "random_seed": FINEWEB_VAL_SEED,
-            "selection": f"Docs shuffled with seed {FINEWEB_VAL_SEED}, first N until 500k tokens",
-            "tokenizer": TOKENIZER_NAME,
-        }, f, indent=2)
-    write_bin(val_dir / "fineweb_edu_val.bin", fw_val_tokens)
-    print(f"  Holdout metadata -> {val_dir / 'fineweb_edu_val_meta.json'}")
+        # ==============================================================
+        # 4. FineWeb-Edu — val (shard 97, seed 42, held out)
+        # ==============================================================
+        print(f"\n[4/5] FineWeb-Edu val  (shard {FINEWEB_VAL_SHARD}, seed={FINEWEB_VAL_SEED}, target: 500k tokens)")
+        fineweb_val_path = FINEWEB_DIR / f"fineweb-edu-train-{FINEWEB_VAL_SHARD:05d}-of-00098.arrow"
+        fineweb_val_shard = load_shard(fineweb_val_path)
+        print(f"  Shard {FINEWEB_VAL_SHARD} has {len(fineweb_val_shard):,} docs")
+        import random
+        rng = random.Random(FINEWEB_VAL_SEED)
+        indices = list(range(len(fineweb_val_shard)))
+        rng.shuffle(indices)
+        fw_val_texts = (fineweb_val_shard[i]["text"] for i in indices)
+        fw_val_tokens = encode_texts(
+            tokenizer, fw_val_texts, TARGET_VAL_TOKENS, "FineWeb-Edu val")
+        with open(val_dir / "fineweb_edu_val_meta.json", "w", encoding="utf-8") as f:
+            json.dump({
+                "shard_index": FINEWEB_VAL_SHARD,
+                "shard_file": fineweb_val_path.name,
+                "total_docs_in_shard": len(fineweb_val_shard),
+                "random_seed": FINEWEB_VAL_SEED,
+                "selection": f"Docs shuffled with seed {FINEWEB_VAL_SEED}, first N until 500k tokens",
+                "tokenizer": TOKENIZER_NAME,
+            }, f, indent=2)
+        write_bin(val_dir / "fineweb_edu_val.bin", fw_val_tokens)
+        print(f"  Holdout metadata -> {val_dir / 'fineweb_edu_val_meta.json'}")
 
     # ==================================================================
     # 5. Stage 2 blend (30/30/40 interleaved, ~1B tokens)
     # ==================================================================
-    print(f"\n[5/5] Stage 2 training blend  "
+    step_label = "[1/1]" if args.stage2_only else "[5/5]"
+    print(f"\n{step_label} Stage 2 training blend  "
           f"(30% tiny / 30% wiki / 40% fineweb, "
           f"target ~{(STAGE2_TINY_TOKENS + STAGE2_WIKI_TOKENS + STAGE2_FINEWEB_TOKENS) // 1_000_000}M tokens)")
 
-    # TinyStories — already fully encoded in step 1
-    print(f"  TinyStories: using {len(ts_train_tokens):,} tokens from step 1")
+    # TinyStories — encode fresh in stage2-only mode; reuse from step 1 otherwise
+    if args.stage2_only:
+        print(f"  Encoding TinyStories (up to {STAGE2_TINY_TOKENS//1_000_000}M tokens)...")
+        ts_train_paths = sorted(TINYSTORIES_DIR.glob("tiny_stories-train-*.arrow"))
+        ts_train = concatenate_datasets([load_shard(p) for p in ts_train_paths])
+        ts_train_tokens = encode_texts(
+            tokenizer, ts_train["text"], STAGE2_TINY_TOKENS, "TinyStories")
+        print(f"  TinyStories tokens encoded: {len(ts_train_tokens):,}")
+    else:
+        print(f"  TinyStories: using {len(ts_train_tokens):,} tokens from step 1")
     stage2_tiny = ts_train_tokens
 
     # Wikipedia — shards 0 to (WIKI_VAL_SHARD - 1); val shard is held out
@@ -291,19 +315,22 @@ def main():
     # Interleave
     print("  Interleaving in 30/30/40 chunks...")
     stage2_tokens = interleave_stage2(stage2_tiny, stage2_wiki, stage2_fineweb)
-    write_bin(out_dir / "stage2_train.bin", stage2_tokens)
+    write_bin(stage2_dir / "stage2_train.bin", stage2_tokens)
 
     # ==================================================================
     # Summary
     # ==================================================================
     print("\n=== Tokenization complete ===")
-    files = [
-        out_dir / "tinystories_train.bin",
-        out_dir / "stage2_train.bin",
-        val_dir / "tinystories_val.bin",
-        val_dir / "wikipedia_val.bin",
-        val_dir / "fineweb_edu_val.bin",
-    ]
+    if args.stage2_only:
+        files = [stage2_dir / "stage2_train.bin"]
+    else:
+        files = [
+            out_dir / "tinystories_train.bin",
+            stage2_dir / "stage2_train.bin",
+            val_dir / "tinystories_val.bin",
+            val_dir / "wikipedia_val.bin",
+            val_dir / "fineweb_edu_val.bin",
+        ]
     for f in files:
         if f.exists():
             tokens = np.memmap(str(f), dtype=np.uint16, mode='r')
