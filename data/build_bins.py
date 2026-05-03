@@ -7,7 +7,7 @@ Usage:
 
 Output (training bins in --output-dir, val bins in --output-dir/val/):
     data/tinystories_train.bin  — Stage 1 training data
-    data/stage2_train.bin       — Stage 2 training blend (30/30/40)
+    data/stage2_train.bin       — Stage 2 training blend (30/30/40, ~1B tokens)
     data/val/tinystories_val.bin
     data/val/wikipedia_val.bin  — Wikipedia shard 40 held out
     data/val/fineweb_edu_val.bin — FineWeb-Edu shard 97, seed 42
@@ -52,12 +52,12 @@ TOKENIZER_NAME = "NousResearch/Llama-2-7b-hf"
 # ---------------------------------------------------------------------------
 # Token budget targets
 # ---------------------------------------------------------------------------
-TARGET_TRAIN_TOKENS = 100_000_000   # 100M tokens for tinystories_train.bin
+TARGET_TRAIN_TOKENS = 100_000_000   # 100M tokens for tinystories_train.bin (Stage 1)
 TARGET_VAL_TOKENS   =     500_000   # 500k tokens per val set
-# Stage 2: 30M + 30M + 40M = 100M interleaved
-STAGE2_TINY_TOKENS     = 30_000_000
-STAGE2_WIKI_TOKENS     = 30_000_000
-STAGE2_FINEWEB_TOKENS  = 40_000_000
+# Stage 2: 300M + 300M + 400M = ~1B tokens interleaved
+STAGE2_TINY_TOKENS     = 300_000_000
+STAGE2_WIKI_TOKENS     = 300_000_000
+STAGE2_FINEWEB_TOKENS  = 400_000_000
 
 # Wikipedia holdout: shard 40 (last shard, 28,288 docs)
 WIKI_VAL_SHARD = 40
@@ -109,6 +109,13 @@ def load_shard(shard_path: Path) -> Dataset:
     if not shard_path.exists():
         raise FileNotFoundError(f"Missing shard: {shard_path}")
     return Dataset.from_file(str(shard_path))
+
+
+def iter_shard_texts(shard_paths: list):
+    """Yield texts from multiple HuggingFace arrow shards in order."""
+    for path in shard_paths:
+        shard = Dataset.from_file(str(path))
+        yield from shard["text"]
 
 
 def interleave_stage2(
@@ -173,13 +180,18 @@ def main():
     # ==================================================================
     # 1. TinyStories — train
     # ==================================================================
-    print("\n[1/5] TinyStories train  (target: 100M tokens)")
+    print(f"\n[1/5] TinyStories train  (encoding up to {STAGE2_TINY_TOKENS//1_000_000}M tokens "
+          f"— first {TARGET_TRAIN_TOKENS//1_000_000}M written to tinystories_train.bin, "
+          f"remainder used for stage2 blend)")
     ts_train_paths = sorted(TINYSTORIES_DIR.glob("tiny_stories-train-*.arrow"))
     ts_train = concatenate_datasets([load_shard(p) for p in ts_train_paths])
     print(f"  {len(ts_train):,} docs across {len(ts_train_paths)} shards")
+    # Encode up to STAGE2_TINY_TOKENS so the full amount is available for the stage2 blend.
+    # tinystories_train.bin (Stage 1) gets only the first TARGET_TRAIN_TOKENS (100M).
     ts_train_tokens = encode_texts(
-        tokenizer, ts_train["text"], TARGET_TRAIN_TOKENS, "TinyStories train")
-    write_bin(out_dir / "tinystories_train.bin", ts_train_tokens)
+        tokenizer, ts_train["text"], STAGE2_TINY_TOKENS, "TinyStories train")
+    print(f"  Total TinyStories tokens encoded: {len(ts_train_tokens):,}")
+    write_bin(out_dir / "tinystories_train.bin", ts_train_tokens[:TARGET_TRAIN_TOKENS])
 
     # ==================================================================
     # 2. TinyStories — val
@@ -242,29 +254,39 @@ def main():
     print(f"  Holdout metadata -> {val_dir / 'fineweb_edu_val_meta.json'}")
 
     # ==================================================================
-    # 5. Stage 2 blend (30/30/40 interleaved)
+    # 5. Stage 2 blend (30/30/40 interleaved, ~1B tokens)
     # ==================================================================
-    print("\n[5/5] Stage 2 training blend  (30% tiny / 30% wiki / 40% fineweb, 100M tokens)")
+    print(f"\n[5/5] Stage 2 training blend  "
+          f"(30% tiny / 30% wiki / 40% fineweb, "
+          f"target ~{(STAGE2_TINY_TOKENS + STAGE2_WIKI_TOKENS + STAGE2_FINEWEB_TOKENS) // 1_000_000}M tokens)")
 
-    # TinyStories portion (already tokenized — slice from train tokens)
-    print("  Slicing TinyStories for stage2...")
-    stage2_tiny = ts_train_tokens[:STAGE2_TINY_TOKENS]
+    # TinyStories — already fully encoded in step 1
+    print(f"  TinyStories: using {len(ts_train_tokens):,} tokens from step 1")
+    stage2_tiny = ts_train_tokens
 
-    # Wikipedia — use shard 0 (shard 40 held out so this is clean)
-    print("  Encoding Wikipedia shard 0 for stage2...")
-    wiki_s0_path = WIKIPEDIA_DIR / "wikipedia-train-00000-of-00041.arrow"
-    wiki_s0 = load_shard(wiki_s0_path)
-    print(f"  Wikipedia shard 0: {len(wiki_s0):,} docs")
+    # Wikipedia — shards 0 to (WIKI_VAL_SHARD - 1); val shard is held out
+    wiki_train_shards = sorted(
+        p for p in WIKIPEDIA_DIR.glob("wikipedia-train-*-of-00041.arrow")
+        if p != WIKIPEDIA_DIR / f"wikipedia-train-{WIKI_VAL_SHARD:05d}-of-00041.arrow"
+    )
+    print(f"  Wikipedia: {len(wiki_train_shards)} train shards available "
+          f"(shard {WIKI_VAL_SHARD} held out for val)")
     stage2_wiki = encode_texts(
-        tokenizer, wiki_s0["text"], STAGE2_WIKI_TOKENS, "Wiki stage2")
+        tokenizer, iter_shard_texts(wiki_train_shards),
+        STAGE2_WIKI_TOKENS, "Wiki stage2")
+    print(f"  Wikipedia tokens encoded: {len(stage2_wiki):,}")
 
-    # FineWeb-Edu — use shard 0 (shard 97 held out so this is clean)
-    print("  Encoding FineWeb-Edu shard 0 for stage2...")
-    fw_s0_path = FINEWEB_DIR / "fineweb-edu-train-00000-of-00098.arrow"
-    fw_s0 = load_shard(fw_s0_path)
-    print(f"  FineWeb-Edu shard 0: {len(fw_s0):,} docs")
+    # FineWeb-Edu — shards 0 to (FINEWEB_VAL_SHARD - 1); val shard is held out
+    fw_train_shards = sorted(
+        p for p in FINEWEB_DIR.glob("fineweb-edu-train-*-of-00098.arrow")
+        if p != FINEWEB_DIR / f"fineweb-edu-train-{FINEWEB_VAL_SHARD:05d}-of-00098.arrow"
+    )
+    print(f"  FineWeb-Edu: {len(fw_train_shards)} train shards available "
+          f"(shard {FINEWEB_VAL_SHARD} held out for val)")
     stage2_fineweb = encode_texts(
-        tokenizer, fw_s0["text"], STAGE2_FINEWEB_TOKENS, "FineWeb stage2")
+        tokenizer, iter_shard_texts(fw_train_shards),
+        STAGE2_FINEWEB_TOKENS, "FineWeb stage2")
+    print(f"  FineWeb-Edu tokens encoded: {len(stage2_fineweb):,}")
 
     # Interleave
     print("  Interleaving in 30/30/40 chunks...")
