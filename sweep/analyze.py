@@ -2,7 +2,7 @@
 Stage 1 -> Stage 2 zoom-and-confirm protocol.
 
 For each dim size independently:
-    1. Rank all complete Stage 1 configs by eval_ppl_tiny at step 1500
+    1. Rank all complete Stage 1 configs by eval_ppl_tiny at step 3000
     2. Identify best n_loops and best n_prelude independently
     3. Apply boundary rule: if best is at edge of range, extend outward
        (e.g., if best n_loops = 8, add n_loops = 10)
@@ -25,7 +25,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 LOOPS_GRID   = [2, 4, 6, 8]    # Stage 1 sweep values
 PRELUDES_GRID = [2, 3, 4, 6]   # Stage 1 sweep values
 STAGE2_SEEDS = [42, 137, 271]
-STAGE2_EVAL_STEP = 1500         # rank by perplexity at this step
+STAGE2_EVAL_STEP = 3000         # rank by perplexity at this step
 
 
 def config_id(d_model, n_loops, n_prelude, seed, stage):

@@ -4,7 +4,7 @@ Called by train_one.py at eval steps.
 Also callable standalone for post-training evaluation.
 
 Usage:
-    python eval/perplexity.py --checkpoint checkpoints/{id}/step_1500.pt
+    python eval/perplexity.py --checkpoint checkpoints/{id}/step_3000.pt
                               --data data/val/wikipedia_val.bin
                               --seq-len 512
 """

@@ -1,7 +1,7 @@
 """
 Phase 5 verification:
 1. eval/perplexity.py standalone against Phase 3/4 test checkpoint
-2. sweep/analyze.py on current results.db (may have few/no step-1500 rows)
+2. sweep/analyze.py on current results.db (may have few/no step-3000 rows)
 3. plot/plot_sweep.py generates figures from available data
 """
 import subprocess
@@ -55,7 +55,7 @@ def test_perplexity():
 
 
 def test_analyze():
-    print("\n[2] sweep/analyze.py (expects step-1500 rows; may show empty)")
+    print("\n[2] sweep/analyze.py (expects step-3000 rows; may show empty)")
     rc = run([
         PYTHON, str(PROJECT_ROOT / "sweep" / "analyze.py"),
         "--db", str(DB),
