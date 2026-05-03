@@ -33,13 +33,13 @@ from train.lr_schedule import get_lr
 SEQ_LEN        = 512
 BATCH_SIZE     = 4
 GRAD_ACCUM     = 8        # effective batch = 4 * 8 * 512 = 16,384 tokens/step
-TOTAL_STEPS    = 1500     # Stage 1
+TOTAL_STEPS    = 3000     # Stage 1 — all configs
 WARMUP_STEPS   = 100
 PEAK_LR        = 3e-4
 MIN_LR         = 3e-5
 WEIGHT_DECAY   = 0.1
 GRAD_CLIP      = 1.0
-EVAL_STEPS     = (500, 1500)
+EVAL_INTERVAL  = 500      # Tier 2 eval every 500 steps
 LOG_INTERVAL   = 50       # Tier 1 log every 50 steps
 MAX_EVAL_BATCHES = 50
 
@@ -211,8 +211,6 @@ def main():
     config_id = args.config_id
 
     total_steps = args.max_steps if args.max_steps else TOTAL_STEPS
-    # For test runs, fire Tier 2 eval at the final step
-    eval_steps = set(EVAL_STEPS) if not args.max_steps else {total_steps}
 
     try:
         mark_running(conn, config_id)
@@ -231,8 +229,8 @@ def main():
 
         torch.manual_seed(row["seed"])
         model = CART(cfg).to(device)
-        if cfg.d_model >= 768:
-            model.enable_gradient_checkpointing()
+        # Gradient checkpointing disabled: VRAM fits all configs without it,
+        # and the checkpoint+HyperConnection+LTI interaction corrupts gradients.
 
         param_counts = model.count_parameters()
         print(f"Params: total={param_counts['total']:,}  "
@@ -296,6 +294,7 @@ def main():
         n_tokens_seen = 0
         last_loss = float("nan")
         last_grad_norm = float("nan")
+        last_ppl_tiny = float("nan")
 
         if device.type == "cuda":
             torch.cuda.reset_peak_memory_stats()
@@ -337,15 +336,16 @@ def main():
                     n_tokens_seen, wall_sec, sr,
                 )
                 tps = rolling_tps(step_times)
+                ppl_str = f"{last_ppl_tiny:.2f}" if last_ppl_tiny == last_ppl_tiny else "---"
                 print(f"step {step:4d}/{total_steps}  loss={last_loss:.4f}  "
                       f"grad={last_grad_norm:.3f}  lr={lr:.2e}  "
-                      f"tps={tps:.0f}  rho={sr:.4f}")
+                      f"tps={tps:.0f}  rho={sr:.4f}  ppl={ppl_str}")
                 if sr > 0.99:
                     print(f"WARNING: spectral radius {sr:.4f} at step {step} "
                           f"— possible instability")
 
             # --- Tier 2: full eval at checkpoints ---
-            if step in eval_steps:
+            if step % EVAL_INTERVAL == 0:
                 print(f"\n[Tier 2 eval @ step {step}]")
                 ppl_tiny = eval_perplexity(model, val_files["tiny"],    SEQ_LEN, device)
                 ppl_wiki = eval_perplexity(model, val_files["wiki"],    SEQ_LEN, device)
@@ -361,6 +361,7 @@ def main():
                 )
                 print(f"  ppl_tiny={ppl_tiny:.2f}  ppl_wiki={ppl_wiki:.2f}  "
                       f"ppl_edu={ppl_edu:.2f}  vram={peak_vram:.2f}GB  tps={tps:.0f}")
+                last_ppl_tiny = ppl_tiny
                 if device.type == "cuda":
                     torch.cuda.reset_peak_memory_stats()
 

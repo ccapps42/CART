@@ -65,8 +65,11 @@ class MLACrossAttention(nn.Module):
     Q also does NOT receive RoPE here — the hidden state h_t does
     not have a direct correspondence to token positions.
 
-    Attention is NOT causal here (cross-attention from h_t to e).
-    The causal mask was already applied in the prelude when e was built.
+    Attention IS causal (is_causal=True). Although e is computed with
+    causal self-attention, e[t] still encodes token t as part of its
+    input context. Non-causal cross-attention would allow h[t] to attend
+    to e[t+1], which was built from token t+1 — leaking the prediction
+    target back into the hidden state.
     """
     def __init__(self, config: CARTConfig):
         super().__init__()
@@ -91,8 +94,10 @@ class MLACrossAttention(nn.Module):
 
         Q = self.q_proj(h).view(B, T, H, D).transpose(1, 2)  # [B, H, T, D]
 
-        # Non-causal cross-attention: h_t tokens attend to all e tokens
-        out = F.scaled_dot_product_attention(Q, K, V, is_causal=False)
+        # Causal cross-attention: h[t] may only attend to e[0..t].
+        # e is built from the same sequence, so e[t+1] encodes token t+1 —
+        # non-causal access would leak future tokens into the prediction.
+        out = F.scaled_dot_product_attention(Q, K, V, is_causal=True)
         out = out.transpose(1, 2).contiguous().view(B, T, H * D)
         return self.o_proj(out)
 

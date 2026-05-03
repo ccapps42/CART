@@ -124,6 +124,17 @@ def main():
         print(f"[{i+1}/{len(pending)}] config_id={cid}  "
               f"d={row['d_model']}  R={row['n_loops']}  P={row['n_prelude']}")
 
+        # All configs use mixed data for cross-scale comparability
+        if args.train_bin:
+            effective_train_bin = args.train_bin
+        else:
+            effective_train_bin = str(_ROOT / "data" / "stage2_train.bin")
+
+        if args.max_steps:
+            effective_max_steps = args.max_steps
+        else:
+            effective_max_steps = None  # use TOTAL_STEPS from train_one.py (3000)
+
         success = False
         for attempt in range(MAX_RETRIES):
             if attempt > 0:
@@ -131,7 +142,7 @@ def main():
                 time.sleep(RETRY_DELAY_S)
                 reset_to_pending(conn, cid)
 
-            rc = run_one(cid, args.db, args.max_steps, args.train_bin, args.val_dir)
+            rc = run_one(cid, args.db, effective_max_steps, effective_train_bin, args.val_dir)
 
             if rc == 0:
                 success = True

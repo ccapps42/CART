@@ -35,15 +35,18 @@ KV Projection  ◄────────────────────�
   K, V computed once from e, reused across all R loops
     ↓
 ┌── Core Block × R (shared weights) ──────────────────┐
-│   Hyper-connections (n=3, blend last 3 h states)    │
-│   LIE: loop index embedding injected                │
-│   MLA cross-attention (Q from h_t, K/V from e)     │
-│   SwiGLU FFN                                        │
-│   LTI injection: h = sigmoid(A)·h_input + block_out│
+│   hyper.combine(buffer) → h_input                   │
+│     (softmax-weighted blend of last n=3 h states)   │
+│   LIE: sinusoidal loop-index signal added to h_input│
+│   MLA cross-attention (Q from h_input, K/V from e)  │
+│   SwiGLU FFN  →  transformer_out                    │
+│   LTI: h = sigmoid(A)·h_input + transformer_out     │
+│   hyper.update_buffer(buffer, h)                    │
+│     (push h to front of ring buffer, drop oldest)   │
 └─────────────────────────────────────────────────────┘
     ↓
 Coda × 1
-  MLA self-attention
+  MLA self-attention (RoPE, causal)
   SwiGLU FFN
     ↓
 RMSNorm → Output logits (tied embedding weight)
@@ -53,10 +56,10 @@ RMSNorm → Output logits (tied embedding weight)
 
 | Component | Description | Source |
 |---|---|---|
-| **MLA cross-attention** | Core block Q from h_t, K/V from prelude output e — computed once, shared across all R loops | DeepSeek-V2 |
-| **LTI injection** | Spectral radius < 1 enforced via sigmoid-parameterized A matrix — enables stable training at high R | Parcae |
-| **LIE** | Sinusoidal loop-index signal injected before each core pass — allows shared-weight block to learn depth-specific behavior | OpenMythos |
-| **Hyper-connections** | Learned weighted blend of last n=3 loop states at each boundary — gradient highway for high-R configs | Hyperloop Transformer |
+| **MLA cross-attention** | Core block Q from h_input, K/V from prelude output e — computed once, shared across all R loops | DeepSeek-V2 |
+| **LTI injection** | Spectral radius < 1 enforced via sigmoid-parameterized A diagonal — enables stable training at high R | Parcae |
+| **LIE** | Sinusoidal loop-index signal projected to model_dim and injected before each core pass — allows shared-weight block to learn depth-specific behavior | OpenMythos |
+| **Hyper-connections** | Learned softmax-weighted blend of last n=3 loop states at each boundary; ring buffer updated after LTI | Hyperloop Transformer |
 | **Prelude/Core/Coda** | Three-zone structural separation of contextualization, iterative refinement, and output production | Hyperloop Transformer |
 
 ### Fixed Hyperparameters
@@ -82,11 +85,11 @@ This repository contains the full sweep across three axes:
 
 | Variable | Values |
 |---|---|
-| d_model | 256, 512, 768 (RTX 3050) · 1024 (RTX 3090) |
+| d_model | 256, 512, 768, 1024 (all RTX 3050) |
 | Loop count R | 2, 4, 6, 8 |
 | Prelude depth P | 2, 3, 4, 6 |
 
-**64 total configurations.** Stage 1 (1,500 steps, single seed) screens all configs. Stage 2 (10k–20k steps, 3 seeds) confirms the neighborhood of the optimum.
+**64 total configurations.** Stage 1 (3,000 steps, single seed, mixed training data) screens all configs. Stage 2 (longer training, 3 seeds) confirms the neighborhood of the optimum.
 
 The central research question: **how does the quality-per-parameter tradeoff of shared-weight recurrent depth scale as a function of model dimension and loop count?**
 
@@ -145,14 +148,25 @@ Model_Paper_1/
 
 ## Training Data
 
-| Dataset | Stage | Proportion |
-|---|---|---|
-| TinyStories (`roneneldan/TinyStories`) | Stage 1 (screen) | 100% |
-| TinyStories | Stage 2 (confirm) | 30% |
-| Wikipedia (`wikimedia/wikipedia`, 20231101.en) | Stage 2 | 30% |
-| FineWeb-Edu (`HuggingFaceFW/fineweb-edu`, sample-10BT) | Stage 2 | 40% |
+All sweep configs use a single mixed training bin (`stage2_train.bin`) interleaved in 512-token chunks:
 
-Tokenizer: `microsoft/phi-2` BPE, 32k vocabulary.
+| Dataset | Proportion | HuggingFace ID |
+|---|---|---|
+| TinyStories | 30% | `roneneldan/TinyStories` |
+| Wikipedia | 30% | `wikimedia/wikipedia`, 20231101.en |
+| FineWeb-Edu | 40% | `HuggingFaceFW/fineweb-edu`, sample-10BT |
+
+**Total training tokens:** 100M (30M TinyStories / 30M Wikipedia / 40M FineWeb-Edu)
+
+**Validation sets** (held out, never seen during training):
+
+| Val set | Source | Hold-out method |
+|---|---|---|
+| `tinystories_val.bin` | TinyStories validation split | Official split |
+| `wikipedia_val.bin` | Wikipedia shard 40 of 41 | Last shard held out |
+| `fineweb_edu_val.bin` | FineWeb-Edu shard 97 of 98 | Last shard, shuffled seed 42 |
+
+**Tokenizer:** `NousResearch/Llama-2-7b-hf` (Llama-2 BPE, 32,000 vocabulary). Note: the architecture spec originally referenced `microsoft/phi-2` but phi-2 uses a ~51k vocabulary; the Llama-2 tokenizer is the correct match for vocab_size=32,000.
 
 ---
 
@@ -160,8 +174,7 @@ Tokenizer: `microsoft/phi-2` BPE, 32k vocabulary.
 
 All sweep runs performed on consumer hardware:
 
-- **RTX 3050** (8GB VRAM) — d_model ∈ {256, 512, 768}
-- **RTX 3090** (24GB VRAM) — d_model = 1024
+- **RTX 3050** (8GB VRAM) — all d_model ∈ {256, 512, 768, 1024}
 
 No custom CUDA kernels. Flash Attention via `torch.nn.functional.scaled_dot_product_attention` (PyTorch 2.1+, Ampere architecture).
 
@@ -183,7 +196,7 @@ Requirements: `torch>=2.1.0`, `transformers>=4.35.0`, `datasets>=2.14.0`, `bitsa
 
 ```bash
 # 1. Pre-tokenize data (run once)
-python data/tokenize.py --output-dir data/
+python data/build_bins.py --output-dir data/
 
 # 2. Generate all 64 sweep configs
 python sweep/generate_configs.py --db results.db
@@ -206,7 +219,7 @@ python sweep/orchestrate.py --stage 2 --hardware 3050
 
 ```bibtex
 @article{capps2026cart,
-  title   = {CART: Context-Anchored Recurrent Transformers},
+  title   = {CART: Context-Anchored Recurrent Transformer},
   author  = {Capps, Chad},
   year    = {2026},
   url     = {https://github.com/ccapps42/CART}
@@ -225,7 +238,7 @@ MIT License. See [LICENSE](LICENSE) for details.
 
 CART is an original architecture designed and developed by **Chad Capps**. The following published works informed individual components:
 
-- **Parcae** — LTI stability via spectral radius constraint
+- **Parcae** — LTI stability via sigmoid-parameterized spectral radius constraint
 - **Hyperloop Transformer** (MIT, 2026) — prelude/core/coda structural organization and hyper-connections at loop boundaries
 - **OpenMythos** (kyegomez) — loop index embedding (LIE)
 - **DeepSeek-V2** — Multi-head Latent Attention (MLA)
