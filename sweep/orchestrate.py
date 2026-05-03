@@ -61,7 +61,8 @@ def median_wall_sec(conn, stage: int, hardware: str) -> float | None:
 
 
 def run_one(config_id: str, db_path: str, max_steps: int | None,
-            train_bin: str | None, val_dir: str | None) -> int:
+            train_bin: str | None, val_dir: str | None,
+            ckpt_interval: int | None) -> int:
     cmd = [
         PYTHON, str(TRAIN_ONE),
         "--config-id", config_id,
@@ -69,6 +70,8 @@ def run_one(config_id: str, db_path: str, max_steps: int | None,
     ]
     if max_steps:
         cmd += ["--max-steps", str(max_steps)]
+    if ckpt_interval:
+        cmd += ["--ckpt-interval", str(ckpt_interval)]
     if train_bin:
         cmd += ["--train-bin", train_bin]
     if val_dir:
@@ -94,6 +97,9 @@ def main():
                         help="Stop after this many configs (for testing only)")
     parser.add_argument("--max-steps", type=int, default=None,
                         help="Override steps per config (for testing only)")
+    parser.add_argument("--ckpt-interval", type=int, default=None,
+                        help="Save intermediate checkpoints every N steps. "
+                             "Recommended for Stage 2 long runs (e.g. --ckpt-interval 5000).")
     parser.add_argument("--train-bin", default=None,
                         help="Override training .bin path (for testing only)")
     parser.add_argument("--val-dir", default=None,
@@ -142,7 +148,8 @@ def main():
                 time.sleep(RETRY_DELAY_S)
                 reset_to_pending(conn, cid)
 
-            rc = run_one(cid, args.db, effective_max_steps, effective_train_bin, args.val_dir)
+            rc = run_one(cid, args.db, effective_max_steps, effective_train_bin, args.val_dir,
+                        args.ckpt_interval)
 
             if rc == 0:
                 success = True
