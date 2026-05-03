@@ -91,8 +91,7 @@ CART/
 
 | Axis | Values | Hardware |
 |---|---|---|
-| d_model | 256, 512, 768 | RTX 3050 |
-| d_model | 1024 | RTX 3090 |
+| d_model | 256, 512, 768, 1024 | RTX 3050 |
 | n_loops (R) | 2, 4, 6, 8 | |
 | n_prelude (P) | 2, 3, 4, 6 | |
 
@@ -245,15 +244,11 @@ python sweep/generate_configs.py --db results.db
 Expected output: "Inserted 64 new configs" and "All ordering checks passed."
 
 ### Step 3: Run Stage 1 sweep
-On RTX 3050:
+On RTX 3050 (all 64 configs):
 ```bash
 python sweep/orchestrate.py --stage 1 --hardware 3050 --db results.db
 ```
-On RTX 3090 (for d=1024 configs):
-```bash
-python sweep/orchestrate.py --stage 1 --hardware 3090 --db results.db
-```
-- 48 configs on 3050 (d=256/512/768), 16 configs on 3090 (d=1024)
+- 64 configs on 3050 (d=256/512/768/1024)
 - ~3000 steps each, eval every 500 steps
 - Test run first: `--max-configs 2 --max-steps 50`
 
