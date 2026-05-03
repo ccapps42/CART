@@ -3,7 +3,7 @@ Runs pending configs sequentially for a given stage and hardware target.
 
 Usage:
     python sweep/orchestrate.py --stage 1 --hardware 3050
-    python sweep/orchestrate.py --stage 1 --hardware 3090
+    python sweep/orchestrate.py --stage 2 --hardware 3090 --ckpt-interval 5000
 
     # Testing (short runs):
     python sweep/orchestrate.py --stage 1 --hardware 3050 --max-configs 2 --max-steps 50
@@ -19,8 +19,10 @@ _ROOT = Path(__file__).parent.parent
 TRAIN_ONE = _ROOT / "train" / "train_one.py"
 PYTHON = sys.executable
 
-MAX_RETRIES   = 3
-RETRY_DELAY_S = 30
+MAX_RETRIES        = 3
+RETRY_DELAY_S      = 30
+STAGE1_TOTAL_STEPS = 3_000
+STAGE2_TOTAL_STEPS = 61_000   # ~1B tokens at 16,384 tokens/step
 
 
 def open_db(db_path: str) -> sqlite3.Connection:
@@ -96,7 +98,8 @@ def main():
     parser.add_argument("--max-configs", type=int, default=None,
                         help="Stop after this many configs (for testing only)")
     parser.add_argument("--max-steps", type=int, default=None,
-                        help="Override steps per config (for testing only)")
+                        help="Override steps per config. Default: 3000 (stage 1), "
+                             "61000 (stage 2). Use for testing or custom runs.")
     parser.add_argument("--ckpt-interval", type=int, default=None,
                         help="Save intermediate checkpoints every N steps. "
                              "Recommended for Stage 2 long runs (e.g. --ckpt-interval 5000).")
@@ -138,8 +141,10 @@ def main():
 
         if args.max_steps:
             effective_max_steps = args.max_steps
+        elif args.stage == 2:
+            effective_max_steps = STAGE2_TOTAL_STEPS
         else:
-            effective_max_steps = None  # use TOTAL_STEPS from train_one.py (3000)
+            effective_max_steps = STAGE1_TOTAL_STEPS
 
         success = False
         for attempt in range(MAX_RETRIES):
