@@ -35,9 +35,9 @@ SWEEP_META = {
     "rope_base":              "10000.0",
     "ffn_mult":               "8/3",
     "seq_len_stage1":         "512",
-    "seq_len_stage2":         "512",
+    "seq_len_stage2":         "1024",
     "steps_stage1":           "3000",
-    "steps_stage2":           "61000",     # ~1B tokens at 16,384 tokens/step
+    "steps_stage2":           "61000",     # ~1B tokens at 32,768 tokens/step (seq=1024)
     "tokenizer_name":         "NousResearch/Llama-2-7b-hf",
     "tokenizer_note":         ("Spec named microsoft/phi-2 but phi-2 vocab=51200. "
                                "Llama-2 tokenizer used instead (32000 vocab)."),

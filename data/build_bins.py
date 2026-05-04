@@ -69,7 +69,7 @@ WIKI_VAL_SHARD = 40
 FINEWEB_VAL_SHARD = 97
 FINEWEB_VAL_SEED  = 42
 
-SEQ_LEN_INTERLEAVE = 512  # chunk size for stage2 interleaving
+SEQ_LEN_INTERLEAVE = 1024  # chunk size for stage2 interleaving — must match training seq_len
 
 
 # ---------------------------------------------------------------------------

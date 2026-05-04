@@ -191,6 +191,8 @@ def main():
     parser.add_argument("--db", default="results.db")
     parser.add_argument("--max-steps", type=int, default=None,
                         help="Override total training steps (for testing only)")
+    parser.add_argument("--seq-len", type=int, default=None,
+                        help="Sequence length. Default 512 (Stage 1). Use 1024 for Stage 2.")
     parser.add_argument("--ckpt-interval", type=int, default=None,
                         help="Save a checkpoint every N steps (in addition to final). "
                              "Default None = final step only. Use for Stage 2 long runs.")
@@ -199,6 +201,8 @@ def main():
     parser.add_argument("--val-dir", default=None,
                         help="Override val/ directory (for testing only)")
     args = parser.parse_args()
+
+    seq_len = args.seq_len if args.seq_len else SEQ_LEN
 
     # Resolve paths
     train_bin = Path(args.train_bin) if args.train_bin else _DEFAULT_TRAIN_BIN
@@ -266,7 +270,7 @@ def main():
                 f"Training data not found: {train_bin}\n"
                 "Run: python data/tokenize.py --output-dir data/"
             )
-        train_ds = FixedOrderDataset(train_bin, SEQ_LEN)
+        train_ds = FixedOrderDataset(train_bin, seq_len)
         train_loader = DataLoader(
             train_ds,
             batch_size=BATCH_SIZE,
@@ -325,7 +329,7 @@ def main():
             grad_norm = nn.utils.clip_grad_norm_(model.parameters(), GRAD_CLIP)
             optimizer.step()
 
-            batch_tokens = BATCH_SIZE * GRAD_ACCUM * SEQ_LEN
+            batch_tokens = BATCH_SIZE * GRAD_ACCUM * seq_len
             n_tokens_seen += batch_tokens
             step_times.append((time.perf_counter(), batch_tokens))
             last_loss = accum_loss
@@ -351,9 +355,9 @@ def main():
             # --- Tier 2: full eval at checkpoints ---
             if step % EVAL_INTERVAL == 0:
                 print(f"\n[Tier 2 eval @ step {step}]")
-                ppl_tiny = eval_perplexity(model, val_files["tiny"],    SEQ_LEN, device)
-                ppl_wiki = eval_perplexity(model, val_files["wiki"],    SEQ_LEN, device)
-                ppl_edu  = eval_perplexity(model, val_files["fineweb"], SEQ_LEN, device)
+                ppl_tiny = eval_perplexity(model, val_files["tiny"],    seq_len, device)
+                ppl_wiki = eval_perplexity(model, val_files["wiki"],    seq_len, device)
+                ppl_edu  = eval_perplexity(model, val_files["fineweb"], seq_len, device)
                 peak_vram = (torch.cuda.max_memory_allocated() / 1e9
                              if device.type == "cuda" else 0.0)
                 tps  = rolling_tps(step_times)

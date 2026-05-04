@@ -69,7 +69,8 @@ CART/
 | n_hyper | 3 | HyperConnection ring buffer size |
 | LTI init | 0.9 | sigmoid(a_param) = 0.9 at init |
 | RoPE base | 10,000 | Applied in prelude & coda only, NOT per core loop |
-| seq_len | 512 | Stage 1 and Stage 2 |
+| seq_len | 512 | Stage 1 |
+| seq_len | 1024 | Stage 2 — longer context for LAMBADA and reasoning tasks |
 | batch_size | 4 | |
 | grad_accum | 8 | Effective batch = 4 × 8 × 512 = 16,384 tokens/step |
 | peak_lr | 3e-4 | |

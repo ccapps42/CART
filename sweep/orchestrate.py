@@ -64,7 +64,7 @@ def median_wall_sec(conn, stage: int, hardware: str) -> float | None:
 
 def run_one(config_id: str, db_path: str, max_steps: int | None,
             train_bin: str | None, val_dir: str | None,
-            ckpt_interval: int | None) -> int:
+            ckpt_interval: int | None, seq_len: int | None) -> int:
     cmd = [
         PYTHON, str(TRAIN_ONE),
         "--config-id", config_id,
@@ -72,6 +72,8 @@ def run_one(config_id: str, db_path: str, max_steps: int | None,
     ]
     if max_steps:
         cmd += ["--max-steps", str(max_steps)]
+    if seq_len:
+        cmd += ["--seq-len", str(seq_len)]
     if ckpt_interval:
         cmd += ["--ckpt-interval", str(ckpt_interval)]
     if train_bin:
@@ -103,6 +105,8 @@ def main():
     parser.add_argument("--ckpt-interval", type=int, default=None,
                         help="Save intermediate checkpoints every N steps. "
                              "Recommended for Stage 2 long runs (e.g. --ckpt-interval 5000).")
+    parser.add_argument("--seq-len", type=int, default=None,
+                        help="Override sequence length. Default: 512 (stage 1), 1024 (stage 2).")
     parser.add_argument("--train-bin", default=None,
                         help="Override training .bin path (for testing only)")
     parser.add_argument("--val-dir", default=None,
@@ -136,6 +140,8 @@ def main():
         # All configs use mixed data for cross-scale comparability
         if args.train_bin:
             effective_train_bin = args.train_bin
+        elif args.stage == 2:
+            effective_train_bin = str(_ROOT / "data" / "stage2" / "stage2_train.bin")
         else:
             effective_train_bin = str(_ROOT / "data" / "stage2_train.bin")
 
@@ -146,6 +152,13 @@ def main():
         else:
             effective_max_steps = STAGE1_TOTAL_STEPS
 
+        if args.seq_len:
+            effective_seq_len = args.seq_len
+        elif args.stage == 2:
+            effective_seq_len = 1024
+        else:
+            effective_seq_len = None  # train_one.py default (512)
+
         success = False
         for attempt in range(MAX_RETRIES):
             if attempt > 0:
@@ -154,7 +167,7 @@ def main():
                 reset_to_pending(conn, cid)
 
             rc = run_one(cid, args.db, effective_max_steps, effective_train_bin, args.val_dir,
-                        args.ckpt_interval)
+                        args.ckpt_interval, effective_seq_len)
 
             if rc == 0:
                 success = True
