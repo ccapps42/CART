@@ -31,8 +31,8 @@ from train.lr_schedule import get_lr
 # Fixed hyperparameters — identical across all sweep runs
 # ---------------------------------------------------------------------------
 SEQ_LEN        = 512
-BATCH_SIZE     = 4
-GRAD_ACCUM     = 8        # effective batch = 4 * 8 * 512 = 16,384 tokens/step
+BATCH_SIZE     = 8
+GRAD_ACCUM     = 4        # effective batch = 8 * 4 * seq_len tokens/step
 TOTAL_STEPS    = 3000     # Stage 1 — all configs
 WARMUP_STEPS   = 100
 PEAK_LR        = 3e-4
@@ -232,6 +232,8 @@ def main():
         cfg.validate()
 
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        if device.type == "cuda":
+            torch.backends.cudnn.benchmark = True
         print(f"Config: d={cfg.d_model} R={cfg.n_loops} P={cfg.n_prelude}  "
               f"device={device}")
 

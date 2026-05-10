@@ -1,0 +1,5 @@
+Run baselines with:
+  python train/train_dense.py --config-id 3d04ff17b81e48d4 --db results.db
+  python train/train_dense.py --config-id 360b726d0568fa76 --db results.db
+  python train/train_dense.py --config-id 4fb2e27f81dc94d5 --db results.db
+  python train/train_dense.py --config-id 6feffa5e66763f35 --db results.db

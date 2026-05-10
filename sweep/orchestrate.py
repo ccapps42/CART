@@ -22,7 +22,7 @@ PYTHON = sys.executable
 MAX_RETRIES        = 3
 RETRY_DELAY_S      = 30
 STAGE1_TOTAL_STEPS = 3_000
-STAGE2_TOTAL_STEPS = 61_000   # ~1B tokens at 16,384 tokens/step
+STAGE2_TOTAL_STEPS = 30_500   # ~1B tokens at 32,768 tokens/step (seq_len=1024)
 
 
 def open_db(db_path: str) -> sqlite3.Connection:
@@ -135,7 +135,7 @@ def main():
     for i, row in enumerate(pending):
         cid = row["config_id"]
         print(f"[{i+1}/{len(pending)}] config_id={cid}  "
-              f"d={row['d_model']}  R={row['n_loops']}  P={row['n_prelude']}")
+              f"d={row['d_model']}  R={row['n_loops']}  P={row['n_prelude']}  seed={row['seed']}")
 
         # All configs use mixed data for cross-scale comparability
         if args.train_bin:

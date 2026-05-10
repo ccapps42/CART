@@ -15,7 +15,7 @@ class FixedOrderDataset(Dataset):
     Eval: use data/val/*_val.bin files
     """
     def __init__(self, bin_path, seq_len: int):
-        self.data = np.memmap(str(bin_path), dtype=np.uint16, mode='r')
+        self.data = np.fromfile(str(bin_path), dtype=np.uint16)
         self.seq_len = seq_len
         # -1 because each item returns seq_len input + 1 next token as target
         self.n_seqs = (len(self.data) - 1) // seq_len

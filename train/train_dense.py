@@ -29,10 +29,10 @@ from train.lr_schedule import get_lr
 # ---------------------------------------------------------------------------
 # Fixed hyperparameters — identical to CART sweep runs for comparability
 # ---------------------------------------------------------------------------
-SEQ_LEN        = 512
-BATCH_SIZE     = 4
-GRAD_ACCUM     = 8        # effective batch = 4 * 8 * 512 = 16,384 tokens/step
-TOTAL_STEPS    = 61_000   # Stage 2 scale — same as CART Stage 2
+SEQ_LEN        = 1024
+BATCH_SIZE     = 8
+GRAD_ACCUM     = 4        # effective batch = 8 * 4 * 1024 = 32,768 tokens/step
+TOTAL_STEPS    = 30_500   # 30,500 × 32,768 ≈ 1B tokens — same as CART Stage 2
 WARMUP_STEPS   = 100
 PEAK_LR        = 3e-4
 MIN_LR         = 3e-5
@@ -43,7 +43,7 @@ LOG_INTERVAL   = 50
 MAX_EVAL_BATCHES = 50
 
 _ROOT = Path(__file__).parent.parent
-_DEFAULT_TRAIN_BIN = _ROOT / "data" / "stage2_train.bin"
+_DEFAULT_TRAIN_BIN = _ROOT / "data" / "stage2" / "stage2_train.bin"
 _DEFAULT_VAL_DIR   = _ROOT / "data" / "val"
 CKPT_DIR  = _ROOT / "checkpoints"
 
@@ -215,6 +215,8 @@ def main():
         cfg.validate()
 
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        if device.type == "cuda":
+            torch.backends.cudnn.benchmark = True
         print(f"DenseBaseline: d={cfg.d_model}  layers={cfg.n_layers}  device={device}")
 
         torch.manual_seed(row["seed"])

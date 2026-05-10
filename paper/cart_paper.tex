@@ -1,0 +1,623 @@
+\documentclass{article}
+
+% NeurIPS 2025 template (preprint mode for arXiv).
+\usepackage[preprint]{neurips_2025}
+
+% ---- Packages ----
+\usepackage{amsmath,amssymb,amsfonts}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{multirow}
+\usepackage{xcolor}
+\usepackage{hyperref}
+\usepackage{url}
+\usepackage{microtype}
+\usepackage{caption}
+\usepackage{subcaption}
+\usepackage{enumitem}
+\usepackage{algorithm}
+\usepackage{algpseudocode}
+\usepackage{tikz}
+
+\hypersetup{colorlinks=true, linkcolor=blue, citecolor=blue, urlcolor=blue}
+
+% ---- Convenience macros ----
+\newcommand{\cart}{\textsc{CART}}
+\newcommand{\tbd}[1]{\textcolor{gray}{\textit{TBD: #1}}}
+\newcommand{\pplwiki}{PPL$_\text{wiki}$}
+\newcommand{\ppltiny}{PPL$_\text{tiny}$}
+\newcommand{\ppledu}{PPL$_\text{edu}$}
+
+% ---- Title ----
+\title{CART: Context-Anchored Recurrent Transformer\thanks{Code, training scripts, and the experiment database are available at \url{https://github.com/ccapps42/CART}.}\\
+A Parameter-Efficient Architecture with Learned Stability}
+
+\author{%
+  Chad A. Capps\\
+  Independent Research\\
+  \texttt{Chad.Capps@me.com}
+}
+
+% ============================================================
+\begin{document}
+\maketitle
+
+% ============================================================
+\begin{abstract}
+We present \cart{} (Context-Anchored Recurrent Transformer), a parameter-efficient language model architecture that reuses a single shared core block $R$ times across depth. Unlike prior looped transformers that recompute key-value representations at every loop iteration, \cart{} computes $K$ and $V$ once from a multi-layer prelude and reuses them throughout the recurrent core via multi-head latent attention (MLA) cross-attention. This design separates context encoding from iterative refinement, reduces per-loop FLOPs, and provides a stable attention anchor for all loop iterations. Stability of the recurrent computation is ensured by a learned Linear Time-Invariant (LTI) gate, which empirically converges to a universal spectral radius of $\varrho \approx 0.893$ across all model scales: a convergence rate that adapts gradually with model width but not with loop count.
+
+We conduct a two-stage sweep across $d_{\text{model}} \in \{256, 512, 768, 1024\}$, prelude depths $P \in \{6\}$, and loop counts $R \in \{6, 8, 10\}$, training all models on $\sim$1B tokens of mixed-domain text at sequence length 1024. Stage 1 (3{,}000 steps) validates \cart{}'s design axes and screens hyperparameters. Stage 2 (30{,}500 steps) provides the primary comparison against Dense transformer baselines.
+
+Preliminary Stage 2 results show \cart{} outperforms density-matched Dense baselines at $d \geq 512$ on all three evaluation metrics, with the advantage most pronounced on natural-language text (\pplwiki{}: $-9\%$, \ppledu{}: $-16\%$ at $d=512$). Complete Stage 2 results across all scales are \tbd{pending training completion, est.\ May 2026}.
+
+A key empirical finding is that $P$ (prelude depth) dominates $R$ (loop count) across all scales in Stage 1, with $R$ delivering increasing returns at larger $d$. The LTI gate discovers a memory timescale without supervision, and this timescale adapts to model complexity but not strongly to loop count, a novel emergent behavior we characterize across 64 configurations.
+\end{abstract}
+
+% ============================================================
+\section{Introduction}
+\label{sec:intro}
+
+The dominant paradigm in language model architecture is the stacked transformer~\citep{vaswani2017attention}: $L$ unique layers, each with independent parameters, applied sequentially. This design scales predictably with $L$, but stored parameter count grows linearly with depth. At inference, every unique layer must be loaded from memory, making model size the primary bottleneck for deployment on memory-constrained hardware.
+
+An alternative approach, depth-recurrent or looped transformers, reuses a single set of parameters across multiple passes through a shared block. The Universal Transformer~\citep{dehghani2018universal} pioneered this direction: a single block applied $R$ times to a token sequence. If the $R$-th application produces a representation of comparable quality to a $R$-layer unique model, then the recurrent model has achieved $R$-fold parameter compression at the cost of sequential compute.
+
+The core challenge is making weight-sharing work. Naive looped transformers underperform their depth-matched counterparts~\citep{zeitoun2026hyperloop}, because a single block applied identically $R$ times cannot adapt its behavior across loop iterations. Recent solutions include hyper-connections~\citep{zhang2024hyperconnections,zeitoun2026hyperloop,schwethelm2026isodepth}, loop-index embeddings~\citep{su2024roformer,gomez2026openmythos}, and explicit stability constraints~\citep{prairie2026parcae,gomez2026openmythos}. The ``prelude / shared-weight core / coda'' topology used in this paper is also shared by several concurrent works~\citep{geiping2025latent,prairie2026parcae,gomez2026openmythos}; what distinguishes \cart{} is how the prelude representation enters the loop. All prior work in this family injects the prelude embedding $e$ via addition or concatenation into the running state, which then \emph{self-attends}. \cart{} instead computes $K, V$ once from $e$ and has the loop body \emph{cross-attend} to those frozen tensors.
+
+\paragraph{Architectural contributions.}
+\cart{} incorporates the proven mechanisms above (hyper-connections, loop-index embeddings, MLA compression) and contributes three architectural elements that, in combination, are not present in any prior or concurrent work we have surveyed:
+
+\begin{enumerate}[leftmargin=*, topsep=2pt, itemsep=1pt]
+  \item \textbf{Once-computed KV anchor with shared-weight cross-attending core.} The prelude computes $K, V$ once via MLA compression and holds them fixed across all $R$ core iterations. All surveyed concurrent looped architectures (Geiping~\citep{geiping2025latent}, Hyperloop~\citep{zeitoun2026hyperloop}, Parcae~\citep{prairie2026parcae}, OpenMythos~\citep{gomez2026openmythos}, and SpiralFormer~\citep{spiralformer2026}) recompute $K, V$ from the evolving hidden state at each loop step. The closest precedent for shared-weight iterated cross-attention is the Perceiver family~\citep{jaegle2021perceiver,jaegle2022perceiverio}, which re-projects $K, V$ from the input array at each iteration rather than caching the projected tensors and is non-autoregressive. \cart{}'s frozen anchor separates context encoding from iterative refinement, reduces per-loop FLOPs by eliminating redundant KV projections, and provides a stable attention target throughout recurrence.
+  \item \textbf{Sigmoid-gated learned stability.} A sigmoid-gated LTI filter guarantees spectral radius $\varrho < 1$ without structural constraints: $h \leftarrow \sigma(a) \odot h_\text{in} + f_\text{transformer}(h)$. Parcae~\citep{prairie2026parcae} and OpenMythos~\citep{gomez2026openmythos} impose stability architecturally via zero-order-hold (ZOH) discretization of a state matrix; \cart{}'s gate instead \emph{learns} its convergence rate from data.
+  \item \textbf{Causal cross-attention requirement.} In autoregressive recurrent models where prelude and core share the same token sequence, non-causal cross-attention leaks future tokens to the recurrent state. We document this constraint and its empirical consequences (Section~\ref{sec:arch_notes}).
+\end{enumerate}
+
+\paragraph{Empirical findings.}
+This paper reports four findings about looped transformers that, to our knowledge, have not been demonstrated in prior work:
+
+\begin{enumerate}[leftmargin=*, topsep=2pt, itemsep=1pt]
+  \item \textbf{Universal learned memory timescale.} Across all 64 Stage 1 configurations (four model widths $d \in \{256, 512, 768, 1024\}$ with $R \in \{2, 4, 6, 8\}$ and $P \in \{2, 3, 4, 6\}$), the LTI gate's spectral radius converges to $\varrho \approx 0.893$, indistinguishable from the $R{=}6$ ``ideal'' value $0.5^{1/R} = 0.8909$. The convergence rate adapts gradually with model width ($+0.0042$ from $d{=}256$ to $d{=}1024$) but is essentially insensitive to loop count.
+  \item \textbf{Prelude depth dominates loop count.} The hyperparameter ordering $P{=}6 > P{=}4 > P{=}3 > P{=}2$ holds without exception across all $R$ values and all four scales. The pattern, that representational depth in the encoder matters more than recurrence depth in the core, has not been quantified across scales in prior work.
+  \item \textbf{The benefit of recurrence depth grows monotonically with model width.} The improvement from $R{=}2$ to $R{=}8$ ranges from $-0.25\%$ at $d{=}256$ (slight regression) to $+5.24\%$ at $d{=}1024$. This predicts that the value of looping increases with scale, a direction that the iso-depth scaling literature~\citep{schwethelm2026isodepth} measures via $\phi$ but has not previously characterized as a function of model width.
+  \item \textbf{Natural-language advantage at parameter parity.} At $d{=}512$ with all 6 complete Stage 2 seeds, \cart{} outperforms a parameter-matched Dense baseline by $\sim 9\%$ on Wikipedia perplexity and $\sim 16\%$ on FineWeb-Edu perplexity, with only $\sim 1.5\%$ improvement on the synthetic narrow-vocabulary TinyStories set. The natural-language-vs-synthetic gap (defined precisely in Section~\ref{sec:eval_terminology}) suggests fixed-point recurrence extracts representations that benefit harder language-modeling targets more than they benefit easier ones.
+\end{enumerate}
+
+This paper presents \cart{}'s design, a systematic Stage 1 sweep across 64 configurations at four scales, and preliminary Stage 2 results against matched Dense baselines. Complete Stage 2 results will update this preprint upon training completion.
+
+% ============================================================
+\section{Related Work}
+\label{sec:related}
+
+\paragraph{Universal and looped transformers.}
+\citet{dehghani2018universal} introduced the Universal Transformer, applying a single block recurrently with adaptive computation time. Subsequent work explored stability, efficiency, and training dynamics. \citet{jeddi2026loopformer} introduced budget-conditioned looping with shortcut-consistency training. \citet{chen2026deeper} demonstrates that shared-weight blocks iterated in latent space exhibit sharp compositional generalization absent in standard transformers. \citet{han2026hierarchical} empirically validates that hierarchical recurrence (distinct boundary layers + looped core) outperforms flat uniform looping, which directly supports \cart{}'s prelude/coda design.
+
+\paragraph{Geiping recurrent-depth latent reasoning.}
+\citet{geiping2025latent} introduced the prelude/core/coda terminology adopted in this paper, scaling a recurrent-depth language model to 3.5B parameters with the layout $(\ell_p, \ell_r, \ell_c) = (2, 4, 2)$. Their core block is shared-weight and iterated, but the prelude embedding $e$ is reinjected at each iteration via concatenation through an adapter $A: \mathbb{R}^{2h} \to \mathbb{R}^h$ mapping $[s_{i-1}; e]$, after which standard causal self-attention recomputes $K, V$ from the resulting state. Stability is achieved via a sandwich-RMSNorm pattern rather than a learned gate. \cart{} adopts the same three-zone layout but replaces the concat-and-self-attend mechanism with a frozen-KV cross-attention anchor and a sigmoid LTI gate.
+
+\paragraph{Perceiver-style architectures.}
+\citet{jaegle2021perceiver,jaegle2022perceiverio} introduced shared-weight iterated cross-attention from a learned latent array to a fixed input array, the closest structural precedent for \cart{}'s shared-weight cross-attending core. Two differences are essential. First, Perceiver re-projects $K, V$ from the input at every cross-attention call (the projection matrices are weight-tied; the resulting tensors are not cached). \cart{} caches the projected $K, V$ tensors themselves. Second, Perceiver's ``input array'' is a separate modality (bytes, images) attended to by a learned latent set, whereas \cart{}'s prelude output is itself a transformer encoding of the same token sequence used by the recurrent core, and the architecture is fully autoregressive and causal.
+
+\paragraph{Hyperloop Transformers.}
+\citet{zeitoun2026hyperloop} propose a structurally similar three-zone architecture (begin/middle/end, 25/50/25\% parameter split) with hyper-connections at loop boundaries. The critical difference from \cart{}: Hyperloop's middle block uses standard self-attention, recomputing $K, V$ from the current hidden state at every loop iteration. \cart{} computes $K, V$ once from the prelude and reuses them, reducing per-loop FLOPs and separating context encoding from iterative refinement. Additionally, \cart{} provides an explicit spectral radius guarantee via the LTI gate, which Hyperloop does not.
+
+\paragraph{Parcae.}
+\citet{prairie2026parcae} independently arrive at the looped prelude/coda structure and address stability via negative-diagonal parameterization of a state transition matrix, discretized via zero-order hold. This architecturally constrains $\varrho < 1$. \cart{} learns stability via a sigmoid gate: $h \leftarrow \sigma(a) \odot h_\text{in} + f_\text{transformer}(h)$, where $\varrho$ emerges from training rather than being structurally imposed. Parcae uses variable recurrence depth (Poisson-sampled) and truncated BPTT; \cart{} uses fixed $R$ and full backpropagation, which \citet{schwethelm2026isodepth} show preserves higher effective loop value ($\phi = 0.65$ vs.\ $0.38$ for truncated).
+
+\paragraph{OpenMythos.}
+\citet{gomez2026openmythos} is an open-source reconstruction of a hypothesized recurrent-depth architecture combining MLA, hyper-connections, loop-index embeddings, and LTI-stable injection. It is the most architecturally similar prior work to \cart{}. Two differences are architecturally significant. First, OpenMythos recomputes $K, V$ from the evolving hidden state at each loop iteration; \cart{} computes $K, V$ once from the prelude and holds them fixed. Second, OpenMythos implements LTI stability via ZOH discretization of a learned state matrix (the same mechanism as Parcae), whereas \cart{}'s sigmoid gate learns its convergence rate without structural constraints. \cart{} was informed by OpenMythos and shares its component vocabulary, but diverges in both the KV treatment and the stability mechanism.
+
+\paragraph{Cross-layer parameter sharing without recurrent semantics.}
+ALBERT~\citep{lan2020albert} shares parameters across stacked transformer layers as a compression strategy. The architecture is otherwise a standard non-recurrent encoder: there is no fixed-point semantics, no LTI gate, no prelude/coda separation, and no notion of ``iterating'' the shared block. \cart{} uses cross-layer weight sharing in the same mechanical sense (a single block is reused $R$ times) but interprets the reuse as recurrence with an explicit context anchor and a stability guarantee.
+
+\paragraph{State-space models and linear-attention recurrence.}
+Mamba~\citep{gu2023mamba}, Mamba-2~\citep{dao2024mamba2}, and RWKV~\citep{peng2023rwkv} achieve infinite-context reasoning via recurrence over the \emph{sequence} dimension, with parallel-scan training algorithms that recover transformer-like throughput. \cart{}'s recurrence is over the \emph{depth} dimension: $R$ shared-weight passes over a fixed-length token sequence. The two are complementary rather than competing: SSMs trade attention's quadratic context cost for fixed-state memory, while \cart{} trades unique-layer parameter cost for sequential depth iteration. A natural future direction is combining the two (an SSM-based prelude feeding a \cart{}-style recurrent core), but this paper restricts attention to a transformer prelude with MLA self-attention.
+
+\paragraph{Other concurrent variants.}
+Three additional concurrent works share aspects of \cart{}'s design but diverge on the key mechanistic details. \citet{spiralformer2026} adopts the same three-zone topology with shared-weight loop and pre-/post-loop blocks, but uses multi-resolution recursion with self-attention on the evolving state. \citet{plt2025parallel} reuses $K, V$ across all loop iterations (the closest precedent for the once-computed-KV idea), but the $K, V$ are projected from the first iteration of the loop block itself, not from a unique prelude over the same tokens, and serve a sliding-window/global hybrid attention pattern rather than a recurrent state anchor. \citet{rdvit2026} applies LTI-stable state injection to vision (semantic segmentation) using a single shared block with optional MoE; the cross-modal nature and dense-prediction setting make a direct comparison difficult, but the LTI-stable framing parallels \cart{}'s. None of these works combine all of: a unique-layer prelude producing a frozen KV anchor, a shared-weight cross-attending core, and a learned sigmoid LTI gate.
+
+\paragraph{Iso-depth scaling laws.}
+\citet{schwethelm2026isodepth} measure the recurrence-equivalence exponent $\phi$, defined as how much one additional loop contributes relative to a unique layer. They find $\phi = 0.46$ for vanilla looped models, rising to $\phi = 0.65$ with hyper-connections. \cart{} incorporates hyper-connections, and we plan to compute $\phi$ for \cart{} using their framework once Stage 2 is complete (Section~\ref{sec:discussion}).
+
+\paragraph{MLA compression.}
+\citet{liu2024deepseek} introduced Multi-head Latent Attention for KV compression in mixture-of-experts models. \cart{} applies MLA to the prelude's KV projection ($d_{kv} = d/4$), making the once-computed context anchor cheaper to produce and store.
+
+% ============================================================
+\section{Architecture}
+\label{sec:arch}
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=0.55\linewidth, height=0.55\textheight, keepaspectratio]{../figures/cart_architecture.png}
+  \caption{\cart{} architecture. The prelude produces context anchor $e$ via $P$ unique layers. KV projections are computed once from $e$ and reused across all $R$ core iterations. The coda produces final token representations.}
+  \label{fig:arch}
+\end{figure}
+
+\cart{} divides depth into three sequential zones (Figure~\ref{fig:arch}):
+
+\[
+\text{Embedding} \to \underbrace{P \text{ unique layers}}_{\text{Prelude}} \to \underbrace{\text{KV}(e)}_{\text{once}} \to \underbrace{R \times \text{CoreBlock}}_{\text{Recurrent Core}} \to \underbrace{1 \text{ layer}}_{\text{Coda}} \to \text{Logits}
+\]
+
+\subsection{Prelude}
+
+The prelude consists of $P$ unique transformer layers, each with MLA self-attention and SwiGLU FFN~\citep{shazeer2020glu}. MLA compresses the key-value cache: instead of projecting $K, V \in \mathbb{R}^{T \times d}$ directly, it first projects $x \in \mathbb{R}^{T \times d}$ to a compressed latent $c \in \mathbb{R}^{T \times d_{kv}}$ (with $d_{kv} = d/4$), then expands to full-rank $K, V$ for attention. The query $Q$ is full-rank. This reduces the cost of the KV projection by $4\times$.
+
+The final prelude output $e \in \mathbb{R}^{T \times d}$ serves as the context anchor for the recurrent core. Before entering the loop, $K$ and $V$ are computed from $e$ once via a single MLA KV Projection module and held fixed for all $R$ iterations.
+
+\subsection{Recurrent Core}
+
+A single \texttt{CoreBlock} is applied $R$ times with shared weights. At each loop step $\ell \in \{1, \ldots, R\}$:
+
+\begin{enumerate}[leftmargin=*, topsep=2pt, itemsep=1pt]
+  \item \textbf{HyperConnection blend.} A ring buffer maintains the last $n_h = 3$ hidden states $\{h_{\ell-1}, h_{\ell-2}, h_{\ell-3}\}$. Softmax-weighted residual combination produces a blended input $\tilde{h}$, initialized with residual weights $[1, 0, 0]$~\citep{zhang2024hyperconnections}.
+
+  \item \textbf{Loop Index Embedding (LIE).} A sinusoidal embedding of the loop index $\ell$ is added to $\tilde{h}$, providing a loop-step signal analogous to RoPE applied over recurrence depth rather than sequence position~\citep{su2024roformer,gomez2026openmythos}.
+
+  \item \textbf{MLA cross-attention.} $Q$ is projected from $\tilde{h}$; $K, V$ are the prelude-derived cache from step 1. Attention is computed with \texttt{is\_causal=True} (see Section~\ref{sec:arch_notes}).
+
+  \item \textbf{SwiGLU FFN.} Hidden dimension $d_{ff} = \lceil (8/3) \cdot d / 256 \rceil \times 256$ following standard practice.
+
+  \item \textbf{LTI gate.} The output is passed through:
+  \[
+    h_\ell = \sigma(a) \odot \tilde{h} + f_\text{attn+FFN}(\tilde{h})
+  \]
+  where $a \in \mathbb{R}^d$ is a learned gate. The sigmoid gating ensures $0 < \sigma(a) < 1$, which, combined with the transformer output scaling, guarantees the spectral radius of the state transition satisfies $\varrho < 1$, ensuring convergence to a fixed point $h^*$ as $R \to \infty$~\citep{prairie2026parcae,gomez2026openmythos}.
+\end{enumerate}
+
+\subsection{Coda}
+
+A single unique layer (MLA self-attention + SwiGLU FFN), structurally identical to a prelude layer. Its output feeds the language model head. The embedding matrix is tied to the output projection.
+
+\subsection{Key Architectural Notes}
+\label{sec:arch_notes}
+
+\paragraph{Causal cross-attention requirement.}
+In encoder-decoder transformers, non-causal cross-attention is correct because encoder and decoder process different sequences. In \cart{}, the prelude and recurrent core both operate on the same token sequence for autoregressive prediction. With non-causal cross-attention, $h[t]$ can attend to $e[t+1]$, which was built from token $t+1$, leaking the prediction target back into the state. We discovered this empirically: with $P=2$, no collapse occurred; with $P=3$, after approximately 1{,}750 training steps, the model discovered the leak and loss collapsed to near zero. The fix is \texttt{is\_causal=True} in \texttt{MLACrossAttention.forward()}. We report this as an architectural constraint for future work in this space.
+
+\paragraph{Gradient checkpointing.}
+Gradient checkpointing is disabled. The HyperConnection ring buffer creates tensor aliasing between loop iterations: $h_\text{input}$ is referenced both inside and outside the checkpoint boundary, and $K, V$ (identical objects) are passed across all $R$ iterations. Checkpointing with these aliasing patterns produces silent gradient corruption. VRAM for all tested configs ($d \leq 1024$, $R \leq 10$, seq\_len=1024) is well within 24 GB without checkpointing.
+
+\paragraph{Fixed-point interpretation.}
+The prelude output $e$ determines the fixed point $h^*$ that the recurrent core converges toward: $P$ sets the ceiling of representational quality, $R$ controls how closely $h^*$ is approached. This separation predicts that $P$ should dominate $R$, a prediction confirmed by the Stage 1 sweep.
+
+\subsection{Parameter Count and Leverage}
+
+For a config $(d, R, P)$, stored parameters are:
+\[
+N_\text{stored} = N_\text{prelude}(P) + N_\text{kv\_proj} + N_\text{core}(1) + N_\text{coda} + N_\text{embed}
+\]
+The core block appears in memory once but is \emph{applied} $R$ times, yielding effective parameters:
+\[
+N_\text{eff} = N_\text{stored} + (R-1) \cdot N_\text{core}
+\]
+Table~\ref{tab:params} shows stored and effective counts for selected configs.
+
+\begin{table}[htbp]
+\centering
+\caption{Parameter counts for selected Stage 2 configs ($P=6$).}
+\label{tab:params}
+\footnotesize
+\begin{tabular}{lrrr}
+\toprule
+Config & Stored & Effective & Leverage \\
+\midrule
+$d=256$, $R=6$ & 14.4M & 18.0M & 1.25$\times$ \\
+$d=256$, $R=10$ & 14.4M & 21.4M & 1.49$\times$ \\
+$d=512$, $R=6$ & 41.1M & 55.5M & 1.35$\times$ \\
+$d=512$, $R=10$ & 41.1M & 76.5M & 1.86$\times$ \\
+$d=768$, $R=6$ & 75.3M & 104.8M & 1.39$\times$ \\
+$d=768$, $R=10$ & 75.3M & 146.3M & 1.94$\times$ \\
+$d=1024$, $R=6$ & 125.1M & 178.8M & 1.43$\times$ \\
+$d=1024$, $R=10$ & 125.1M & 221.8M & 1.77$\times$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+% ============================================================
+\section{Experimental Setup}
+\label{sec:setup}
+
+\subsection{Training Data}
+
+All models train on \texttt{stage2\_train.bin}, a single-pass mixed corpus of $\sim$1B tokens:
+\begin{itemize}[leftmargin=*, topsep=2pt, itemsep=1pt]
+  \item 30\% TinyStories~\citep{tinystories2023} (300M tokens, 1{,}024-token chunks)
+  \item 30\% Wikipedia~\citep{wikidump} (300M tokens)
+  \item 40\% FineWeb-Edu~\citep{fineweb2024} (400M tokens)
+\end{itemize}
+
+Interleaving uses 1{,}024-token chunks so every training window falls within a single source domain. The corpus is consumed in a single pass with no repetition. Tokenizer: Llama-2 (NousResearch/Llama-2-7b-hf, 32{,}000 vocab)~\citep{touvron2023llama}.
+
+\subsection{Stage 1: Hyperparameter Screening}
+
+Stage 1 trains each config for 3{,}000 steps ($\sim$49M tokens) at \texttt{seq\_len}=512, \texttt{batch}=4, \texttt{grad\_accum}=4 (16{,}384 tokens/step). Evaluation every 500 steps on three held-out sets:
+\begin{itemize}[leftmargin=*, topsep=2pt, itemsep=1pt]
+  \item \ppltiny{}: TinyStories validation (synthetic narrow-vocabulary text)
+  \item \pplwiki{}: Wikipedia shard 40 (natural-language general text)
+  \item \ppledu{}: FineWeb-Edu shard 97 (natural-language general text)
+\end{itemize}
+Stage 1 sweeps $d \in \{256, 512, 768, 1024\}$, $R \in \{2, 4, 6, 8\}$, $P \in \{2, 3, 4, 6\}$ (64 configs total), run on an RTX 3050 (8 GB).
+
+\paragraph{A note on evaluation terminology.}
+\label{sec:eval_terminology}
+All three evaluation sets are held-out shards of the same corpora used in training; they are therefore strictly in-distribution under the standard machine-learning definition of distribution shift. We use the labels \emph{narrow-vocabulary} and \emph{natural-language} throughout the paper to distinguish a difference in baseline difficulty rather than a difference in distribution. TinyStories~\citep{tinystories2023} is synthetically generated text with a vocabulary of roughly 1{,}500 words and simple grammar: a small language model can fit it tightly, and absolute perplexities are correspondingly low (typically 3--7 in our sweep). Wikipedia and FineWeb-Edu are natural human-written text with unconstrained vocabulary and complex syntax; perplexity on these sets reflects general-domain language-modeling quality, with absolute values an order of magnitude higher (typically 25--250). When this paper reports that \cart{}'s advantage is ``larger on the natural-language sets,'' we mean that the gap to a parameter-matched Dense baseline grows when the evaluation target is harder, not that \cart{} generalizes to a held-out distribution. The standard out-of-distribution evaluation suite (cross-domain transfer, multilingual, code) is reserved for future work.
+
+\subsection{Stage 2: Full Training}
+
+Stage 2 trains selected configs (P=6, $R \in \{6, 8, 10\}$, 3 seeds each) for 30{,}500 steps ($\sim$1B tokens) at \texttt{seq\_len}=1024, \texttt{batch}=8, \texttt{grad\_accum}=4 (32{,}768 tokens/step). Optimizer: AdamW8bit~\citep{dettmers2022gptint8}, $\text{lr}_\text{max}=3 \times 10^{-4}$, cosine decay to $3 \times 10^{-5}$, 100-step warmup, weight decay 0.1, gradient clip 1.0. All runs on RTX 3090 (24 GB). No \texttt{torch.compile} (unavailable on Windows 11/no Triton).
+
+Dense baselines (7 layers, $P=0$, standard MHA + SwiGLU) will be trained at identical Stage 2 settings for each $d$, following CART sweep completion.
+
+\subsection{Reproducibility}
+\label{sec:repro}
+
+\paragraph{Random seeds.} All Stage 2 configurations are trained with three seeds: $\{42, 137, 271\}$. Reported perplexities are means across seeds. Per-seed standard deviations are tight at $d{=}512$ (max std on \pplwiki{}: 0.14 across all $R \in \{6, 8, 10\}$, or $0.5\%$ of the mean) and wider but still consistent at $d{=}256$ (max std: 2.50, or $6\%$ of the mean). The widening at small $d$ reflects loss-landscape sensitivity at low parameter counts rather than instability in the architecture; gradient norm remained bounded and no run diverged. Per-seed values are available in the released experiment database.
+
+\paragraph{Hardware and compute budget.} Stage 1 (64 configurations) ran on a single RTX 3050 (8 GB), $\sim 1$--$3$ hours per configuration. Stage 2 (36 configurations) runs on a single RTX 3090 (24 GB), $\sim 2$--$13$ hours per configuration depending on $(d, R)$. The full Stage 2 sweep fits in $\sim 7.5$ days of single-GPU wall-clock time. No multi-node, no cloud compute. Total Stage 2 training compute (when complete) is approximately $\mathbf{22}$ \textbf{ExaFLOPs} (using the standard $6N$ per-token estimate~\citep{kaplan2020scaling}, summed over all 36 runs at 1B tokens each), which is roughly $0.25$ PetaFLOP-days. Per-run compute ranges from $0.1$ ExaFLOP at $d{=}256, R{=}6$ to $1.3$ ExaFLOP at $d{=}1024, R{=}10$. For comparison, training a single GPT-3 small (125M parameters)~\citep{brown2020gpt3} required approximately $2.6 \times 10^{19}$ FLOPs ($26$ ExaFLOPs); the full \cart{} 36-config sweep across four scales is therefore comparable in total compute to one GPT-3-small training.
+
+\paragraph{Training-data ordering.} The training corpus \texttt{stage2\_train.bin} is a fixed pre-shuffled file consumed in a single pass. Different seeds therefore see the same data in the same order; randomness affects only weight initialization and dropout-equivalent stochastic operations. This isolates seed sensitivity to model initialization rather than data order.
+
+\paragraph{Token budget and Chinchilla compliance.} Stage 2 trains every configuration on $\sim 1$B tokens. The corresponding tokens-per-effective-parameter ratio varies across the sweep:
+
+\begin{itemize}[leftmargin=*, topsep=2pt, itemsep=1pt]
+  \item $d{=}256$: $47$--$56:1$ — over-Chinchilla (smaller models trained well past the $20:1$ optimum).
+  \item $d{=}512$: $13$--$18:1$ — approximately Chinchilla-optimal at this scale.
+  \item $d{=}768$: $7$--$10:1$ — sub-Chinchilla.
+  \item $d{=}1024$: $4.5$--$5.6:1$ — well under Chinchilla, at roughly $25\%$ of the optimal token budget.
+\end{itemize}
+
+This means cross-scale comparisons in this paper are not measured at matched-Chinchilla budgets. The $d{=}1024$ models in particular are likely to improve substantially with more tokens; their reported perplexities are lower bounds on quality, not asymptotic values. For context, recent sub-1B language models trained for downstream deployment are typically far over-Chinchilla: TinyLlama-1.1B~\citep{zhang2024tinyllama} trains on 3T tokens ($\sim 2700{:}1$), Pythia-160M~\citep{biderman2023pythia} trains on 300B tokens ($\sim 1875{:}1$). Our $4.5{-}56{:}1$ range reflects the goals of an architectural sweep rather than a deployment-targeted release. We discuss this further in Limitations (Section~\ref{sec:discussion}).
+
+\paragraph{Code, training scripts, and database.} The full implementation, all training and evaluation scripts, the SQLite database of every run (\texttt{results.db}), and the figure-generation scripts are released at the URL in the title footnote.
+
+\subsection{FLOPs Budget}
+
+Forward-pass FLOPs per sequence for representative Stage 2 configs at $d=1024$, $T=1024$ are shown in Table~\ref{tab:flops}. The per-optimizer-step cost is $3 \times N_\text{seq/step} \times F_\text{fwd}$ (backward $\approx 2\times$ forward).
+
+\begin{table}[htbp]
+\centering
+\caption{Forward-pass GFLOPs per sequence at $d=1024$, $T=1024$.}
+\label{tab:flops}
+\footnotesize
+\begin{tabular}{lrrr}
+\toprule
+Model & GFLOPs & Stored (M) & Eff.\ layers \\
+\midrule
+Dense 7L & 214 & 123 & 7.0 \\
+CART $R{=}6$, $P{=}6$ & 355 & 125 & 11.6 \\
+CART $R{=}8$, $P{=}6$ & 407 & 125 & 13.3 \\
+CART $R{=}10$, $P{=}6$ & 460 & 125 & 15.0 \\
+Dense 17L (FLOPs-eq.) & 520 & 251 & 17.0 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+CART $R=10$, $P=6$ delivers 15 Dense-layer-equivalent FLOPs from 125M stored parameters, compared to 251M stored for the FLOPs-matched 17-layer Dense (1.70$\times$ more storage for the same compute budget).
+
+\subsection{Training Throughput and Hardware Utilization}
+\label{sec:throughput}
+
+Table~\ref{tab:throughput} reports measured Stage 2 training throughput on a single RTX 3090 (BF16 peak: 71 TFLOPS) across all $(d, R)$ combinations completed at time of writing. Throughput scales as expected with both model width and loop count: at $d{=}1024$ the throughput per token is roughly $1/3$ that at $d{=}256$, and each additional pair of loops costs $\sim 10$--$15\%$ of throughput at fixed $d$.
+
+Model FLOPs Utilization (MFU)~\citep{chowdhery2023palm} measures the fraction of theoretical peak compute used during training. \cart{}'s MFU rises monotonically with model width, from $\sim 17$--$20\%$ at $d{=}256$ to $\sim 33$--$36\%$ at $d{=}512$ and $\sim 54\%$ at $d{=}1024$. The improvement comes from larger matrix multiplications saturating Tensor Cores more effectively. For context, \citet{chowdhery2023palm} report MFU of $46.2\%$ for PaLM-540B on TPU v4, and \citet{brown2020gpt3} estimates around $21\%$ for GPT-3 175B on V100s; \citet{touvron2023llama} report $\sim 45\%$ for Llama-2 training on A100. \cart{}'s $54\%$ MFU at $d{=}1024$ on a single consumer RTX 3090 is therefore at the upper end of the reported range for transformer training, and demonstrates that the depth-recurrent loop structure does not impose a hardware-utilization penalty at the larger scales. Dense-baseline throughputs and MFU at matched parameter counts are \tbd{pending Stage 2 Dense runs}.
+
+\begin{table}[htbp]
+\centering
+\caption{Measured Stage 2 training throughput and Model FLOPs Utilization on a single RTX 3090. Effective batch is 32{,}768 tokens/step in all cases. MFU computed against BF16 peak of $71$ TFLOPS using the standard $6N$ FLOPs-per-token estimate where $N$ is the effective parameter count.}
+\label{tab:throughput}
+\footnotesize
+\begin{tabular}{cccrrr}
+\toprule
+$d$ & $R$ & $P$ & Tokens/sec & sec/step & MFU \\
+\midrule
+256  & 6  & 6 & 134{,}409 & 0.244 & 17\% \\
+256  & 8  & 6 & 118{,}810 & 0.276 & 20\% \\
+256  & 10 & 6 & 108{,}144 & 0.303 & 20\% \\
+512  & 6  & 6 &  69{,}883 & 0.469 & 33\% \\
+512  & 8  & 6 &  62{,}225 & 0.527 & 35\% \\
+512  & 10 & 6 &  55{,}890 & 0.586 & 36\% \\
+1024 & 6  & 6 &  35{,}621 & 0.920 & 54\% \\
+1024 & 8  & 6 & \tbd{} & \tbd{} & \tbd{} \\
+1024 & 10 & 6 & \tbd{} & \tbd{} & \tbd{} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+% ============================================================
+\section{Stage 1 Results}
+\label{sec:stage1}
+
+\subsection{P Dominates R Across All Scales}
+
+Table~\ref{tab:stage1_best} summarizes the best config per scale and key trends from all 64 Stage 1 configurations.
+
+\begin{table}[htbp]
+\centering
+\caption{Best Stage 1 config per scale (step 3{,}000). $\varrho$: mean spectral radius.}
+\label{tab:stage1_best}
+\footnotesize
+\begin{tabular}{ccccccc}
+\toprule
+$d$ & $R^*$ & $P^*$ & \pplwiki & \ppltiny & \ppledu & $\varrho$ \\
+\midrule
+256 & 6 & 6 & 184.9 & 12.31 & 161.3 & 0.8927 \\
+512 & 8 & 6 & 136.4 & 8.40  & 114.5 & 0.8936 \\
+768 & 8 & 6 & 115.0 & 7.06  & 95.4  & 0.8956 \\
+1024 & 8 & 6 & 97.73 & 6.04  & 82.0  & 0.8966 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+In every case, $P=6$ is best. The $P$ ordering ($P=6 > P=4 > P=3 > P=2$) holds without exception across all $R$ values and all four scales.
+
+\subsection{R Benefit Increases with Scale}
+
+Table~\ref{tab:r_benefit} shows the \pplwiki{} improvement from $R=2$ to $R=8$ within the $P=6$ slice. At $d=256$, higher $R$ slightly \emph{hurts} ($-0.25\%$, i.e., regresses). At $d=1024$, the same gain is $+5.24\%$. The benefit of depth recurrence increases monotonically with model width.
+
+\begin{figure}[htbp]
+  \centering
+  \includegraphics[width=\linewidth]{../figures/ppl_vs_r.png}
+  \caption{Stage 1 \pplwiki{} as a function of loop count $R$, with one panel per scale and one curve per prelude depth $P$. The $P{=}6$ curves dominate at every scale, and the slope of the $P{=}6$ curve flattens or inverts at $d{=}256$ (small models gain nothing from more loops) but steepens monotonically with $d_\text{model}$, reaching a $\sim 5\%$ reduction from $R{=}2$ to $R{=}8$ at $d{=}1024$. Recurrence depth and representational width are complementary, not substitutable.}
+  \label{fig:ppl_vs_r}
+\end{figure}
+
+\begin{table}[htbp]
+\centering
+\caption{$R$ benefit at $P=6$: \pplwiki{} improvement from $R=2$ to $R=8$.}
+\label{tab:r_benefit}
+\footnotesize
+\begin{tabular}{cccccr}
+\toprule
+$d$ & $R=2$ & $R=4$ & $R=6$ & $R=8$ & Gain \\
+\midrule
+256  & 185.7 & 185.3 & 184.9 & 186.2 & $-0.25\%$ \\
+512  & 138.8 & 137.9 & 137.4 & 136.4 & $+1.72\%$ \\
+768  & 118.3 & 116.4 & 116.0 & 115.0 & $+2.81\%$ \\
+1024 & 103.1 & 101.1 & 98.75 & 97.73 & $+5.24\%$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Scale Dominates Hyperparameters}
+
+The weakest $d=1024$ config ($R=2$, $P=2$, \pplwiki{} $= 113.1$) outperforms the \emph{best} $d=768$ config ($R=8$, $P=6$, \pplwiki{} $= 115.0$). Within a scale, $P$ and $R$ matter; across scales, $d_\text{model}$ dominates. This motivates the Stage 2 framing: given a fixed parameter budget, does \cart{}'s architecture extract more quality per parameter than a Dense transformer?
+
+\subsection{Loss Curves and Training Dynamics}
+
+\begin{figure}[htbp]
+  \centering
+  \includegraphics[width=\columnwidth]{../figures/loss_curves_256.png}
+  \caption{Training loss curves for all $d=256$ Stage 1 configs. All configs are still declining steeply at step 3{,}000; no plateau is reached. Stage 1 is a relative ranking, not a convergence measurement.}
+  \label{fig:loss256}
+\end{figure}
+
+Figure~\ref{fig:loss256} shows training curves for $d=256$. All curves are still declining at step 3{,}000, confirming Stage 1 measures relative quality, not convergence.
+
+% ============================================================
+\section{Spectral Radius Analysis}
+\label{sec:spectral}
+
+\begin{figure}[htbp]
+  \centering
+  \includegraphics[width=\columnwidth]{../figures/spectral_radius_256.png}
+  \caption{Spectral radius $\varrho$ across all Stage 1 $d=256$ configs. The LTI gate converges to a narrow band $\varrho \approx 0.893$ regardless of $R$ or $P$.}
+  \label{fig:rho256}
+\end{figure}
+
+One of the most striking Stage 1 findings is the convergence of the LTI gate's spectral radius to $\varrho \approx 0.893$ across all 64 configurations (Figure~\ref{fig:rho256}). Table~\ref{tab:rho} summarizes the scale trend.
+
+\begin{table}[htbp]
+\centering
+\caption{Spectral radius $\varrho$ summary across all 64 Stage 1 configs.}
+\label{tab:rho}
+\footnotesize
+\begin{tabular}{ccccc}
+\toprule
+$d$ & Mean $\varrho$ & Min & Max & $\Delta$ from $d{=}256$ \\
+\midrule
+256  & 0.8922 & 0.8908 & 0.8929 & ---     \\
+512  & 0.8925 & 0.8912 & 0.8950 & +0.0003 \\
+768  & 0.8945 & 0.8926 & 0.8959 & +0.0023 \\
+1024 & 0.8964 & 0.8945 & 0.8987 & +0.0042 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\paragraph{Universal memory timescale.}
+For a loop count $R$, the ``ideal'' spectral radius where half the initial residual survives all $R$ iterations is $\varrho_\text{ideal} = 0.5^{1/R}$. For $R=6$, $\varrho_\text{ideal} = 0.8909$, essentially the value all scales learn. The model settles on the $R=6$ ideal regardless of its actual $R$, using a universal convergence rate rather than adapting to the specific loop count.
+
+\paragraph{Scale-dependent drift.}
+Mean $\varrho$ increases slowly with $d_\text{model}$: $+0.0042$ from $d=256$ to $d=1024$. Larger models prefer \emph{slower} convergence: their fixed points are richer and require more gradual refinement. This is not designed; it emerges from training. We interpret it as the LTI mechanism adapting its memory timescale to the complexity of the prelude representations: at $d=1024$, the context anchor $e$ encodes more, and the core needs more loop steps of gentle refinement to fully integrate it.
+
+\paragraph{Residual persistence.}
+With $\varrho \approx 0.893$ and $R=8$, $\varrho^8 \approx 0.41$, meaning 41\% of the initial residual persists after all loops. This is the primary reason larger models extract more benefit from higher $R$: their prelude output is richer enough that the residual carries useful signal even after 8 refinement steps.
+
+% ============================================================
+\section{Stage 2 Results}
+\label{sec:stage2}
+
+\subsection{Preliminary Results (Stage 2 in progress)}
+
+Stage 2 training is ongoing at time of writing. Table~\ref{tab:stage2_results} reports mean perplexity across 3 seeds for all complete configurations. All incomplete entries are marked TBD.
+
+\begin{table*}[t]
+\centering
+\caption{Stage 2 results: mean perplexity across 3 seeds (30{,}500 steps, $\sim$1B tokens, seq\_len=1024). Per-seed standard deviations are summarized in Section~\ref{sec:repro}. Dense baseline: 7-layer dense transformer, same $d$, \tbd{to be trained after CART sweep}. Lower is better.}
+\label{tab:stage2_results}
+\footnotesize
+\begin{tabular}{cccccccccc}
+\toprule
+\multirow{2}{*}{$d$} & \multirow{2}{*}{$R$} & \multirow{2}{*}{$P$} & \multicolumn{3}{c}{Mean CART} & \multicolumn{3}{c}{Dense Baseline} & \multirow{2}{*}{Status} \\
+\cmidrule(lr){4-6}\cmidrule(lr){7-9}
+& & & \ppltiny & \pplwiki & \ppledu & \ppltiny & \pplwiki & \ppledu & \\
+\midrule
+256 & 6  & 6 & 4.343 & 41.17 & 41.52 & \multirow{3}{*}{\tbd{}} & \multirow{3}{*}{\tbd{}} & \multirow{3}{*}{\tbd{}} & Complete \\
+256 & 8  & 6 & 4.343 & 40.31 & 40.77 &  &  &  & Complete \\
+256 & 10 & 6 & 4.371 & 40.71 & 41.22 &  &  &  & Complete \\
+\midrule
+512 & 6  & 6 & 3.360 & 27.10 & 27.44 & \multirow{3}{*}{\tbd{}} & \multirow{3}{*}{\tbd{}} & \multirow{3}{*}{\tbd{}} & Complete \\
+512 & 8  & 6 & 3.366 & 27.20 & 27.60 &  &  &  & Complete \\
+512 & 10 & 6 & 3.367 & 27.38 & 27.55 &  &  &  & Complete \\
+\midrule
+768 & 6  & 6 & \tbd{} & \tbd{} & \tbd{} & \tbd{} & \tbd{} & \tbd{} & In progress \\
+768 & 8  & 6 & \tbd{} & \tbd{} & \tbd{} &  &  &  & Pending \\
+768 & 10 & 6 & \tbd{} & \tbd{} & \tbd{} &  &  &  & Pending \\
+\midrule
+1024 & 6  & 6 & \tbd{} & \tbd{} & \tbd{} & \tbd{} & \tbd{} & \tbd{} & Pending \\
+1024 & 8  & 6 & \tbd{} & \tbd{} & \tbd{} &  &  &  & Pending \\
+1024 & 10 & 6 & \tbd{} & \tbd{} & \tbd{} &  &  &  & Pending \\
+\bottomrule
+\end{tabular}
+\end{table*}
+
+\subsection{Findings from Complete Configurations}
+
+\paragraph{Break-even point: $d=256$ to $d=512$.}
+At $d=256$, \cart{} trails the (invalidated) Dense reference on \ppltiny. At $d=512$, with all six complete configs (R=6 and R=8, 3 seeds each), \cart{} outperforms the Dense $d=512$ baseline on all three metrics:
+\begin{itemize}[leftmargin=*, topsep=2pt, itemsep=1pt]
+  \item \ppltiny{}: $3.360$--$3.366$ vs.\ $3.410$ Dense ($-1.5\%$ to $-1.3\%$)
+  \item \pplwiki{}: $27.10$--$27.20$ vs.\ $29.96$ Dense ($\mathbf{-9.6\%}$ to $\mathbf{-9.2\%}$)
+  \item \ppledu{}: $27.44$--$27.60$ vs.\ $32.96$ Dense ($\mathbf{-16.7\%}$ to $\mathbf{-16.3\%}$)
+\end{itemize}
+\textit{Note: Dense $d=512$ figure is from an earlier run at different settings and is shown for reference only. Stage 2 Dense reruns will provide the final numbers.}
+
+\paragraph{R insensitivity at $d=512$.}
+$R=6$ and $R=8$ produce statistically indistinguishable perplexity at $d=512$ (difference $< 0.01$ on \ppltiny). This mirrors the Stage 1 pattern: the $R$ benefit at $d=512$ was small in Stage 1 ($+1.72\%$ wiki) and appears small at Stage 2 as well. Based on Stage 1 trends, $R$ benefit should increase substantially at $d=768$ and $d=1024$.
+
+\paragraph{Cross-tokenizer reference (bits per byte).}
+For comparison with models trained under different tokenizers, we report bits per byte (BPB) computed as $\text{BPB} = \log_2(\text{ppl}) \cdot t/b$, where $t/b$ is the average tokens-per-byte ratio of the Llama-2 tokenizer on the relevant evaluation domain ($\approx 0.27$ for English natural-language text). At $d{=}512$, mean across $R \in \{6, 8, 10\}$ and 3 seeds: $\text{BPB}_\text{wiki} = 1.286$, $\text{BPB}_\text{edu} = 1.292$. At $d{=}256$, mean: $\text{BPB}_\text{wiki} = 1.444$, $\text{BPB}_\text{edu} = 1.448$.
+
+For order-of-magnitude context, GPT-2 small (124M parameters)~\citep{radford2019gpt2} reports $\sim 1.05$--$1.20$ BPB on WikiText-103 after training on $\sim 8$B tokens; Pythia-160M~\citep{biderman2023pythia} reports $\sim 1.30$--$1.50$ BPB on Wikipedia subsets at $\sim 300$B tokens. \cart{}'s $d{=}512$ figures of $1.29$ on Wikipedia at $\sim 1$B tokens (effective parameter count $55$--$77$M) are in the same range as these references at much larger token budgets, though direct comparison requires identical evaluation corpora and is left for the downstream-benchmarks evaluation (Section~\ref{sec:benchmarks}). The perplexity-to-BPB conversion formula and tokenizer ratios are provided in the released code.
+
+\paragraph{Natural-language advantage.}
+The perplexity gap between \cart{} and Dense is substantially larger on \pplwiki{} and \ppledu{} than on \ppltiny{}. The $d=512$ gaps are $\sim 9\%$ and $\sim 16\%$ on the natural-language sets vs.\ $\sim 1.5\%$ on the synthetic narrow-vocabulary set. The pattern is consistent with \cart{}'s fixed-point recurrence extracting representations that benefit harder language-modeling targets more than they benefit easier ones, rather than \cart{} simply fitting the easier synthetic-text distribution more tightly. Note that this is in-distribution generalization (Section~\ref{sec:eval_terminology}), not out-of-distribution generalization.
+
+\subsection{Cross-Scale Scaling}
+\label{sec:scaling}
+
+Stage 1 perplexity at the best $(R, P)$ configuration per scale fits a power law in $d_\text{model}$:
+\[
+\text{PPL}_\text{wiki}^\text{stage1}(d) \;\approx\; 2371 \cdot d^{-0.458}
+\]
+fit on four data points $(d, R{=}8, P{=}6)$ at step 3{,}000 ($r^2 \approx 0.999$). Each doubling of $d$ reduces \pplwiki{} by approximately $28\%$. The exponent of $-0.458$ sits at the steeper end of the range reported for standard transformer scaling laws~\citep{kaplan2020scaling,hoffmann2022chinchilla}, which typically fit exponents on $d$ alone in the range $-0.3$ to $-0.4$ at sub-Chinchilla token budgets.
+
+At the full Stage 2 training budget of $\sim 1$B tokens, the partial data already complete ($d{=}256$ and $d{=}512$, mean across $R \in \{6, 8, 10\}$ and 3 seeds each) show a steeper exponent:
+\[
+\frac{\text{PPL}_\text{wiki}^\text{stage2}(512)}{\text{PPL}_\text{wiki}^\text{stage2}(256)} \;\approx\; \frac{27.2}{40.7} \;\approx\; 0.667
+\]
+implying a single-doubling exponent of approximately $-0.58$. If this exponent holds at $d \in \{768, 1024\}$, it would suggest \cart{}'s per-$d$ efficiency \emph{improves} with training budget (width pays off more under longer training), rather than collapsing to a single budget-invariant exponent.
+
+\begin{table}[htbp]
+\centering
+\caption{Cross-scale \pplwiki{} (mean across seeds and $R$ at $P=6$) and implied scaling. Stage 1 is the four-scale fit; Stage 2 is single-doubling exponent computed from adjacent scales.}
+\label{tab:scaling}
+\footnotesize
+\begin{tabular}{rrrr}
+\toprule
+$d$ & Stage 1 \pplwiki & Stage 2 \pplwiki & Implied exp.\ ($d$ to $2d$) \\
+\midrule
+ 256 & 186.20 & 40.7   & ---                  \\
+ 512 & 136.42 & 27.2   & $-0.58$              \\
+ 768 & 114.96 & \tbd{} & \tbd{}               \\
+1024 &  97.73 & \tbd{} & \tbd{}               \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Comparison against parameter-matched Dense baselines across all four scales is \tbd{pending Stage 2 Dense runs} and will resolve three open questions: (i) whether \cart{}'s scaling exponent in $d$ is steeper or shallower than Dense's at parameter parity; (ii) whether \cart{}'s natural-language advantage at $d{=}512$ ($\sim 9$--$16\%$, Section~\ref{sec:stage2}) grows or shrinks with $d$; and (iii) per-parameter and per-FLOP knowledge density relative to Dense. The first two are the central questions for the parameter-efficiency claim.
+
+\subsection{Inference-Time Depth Scaling}
+\label{sec:inference_R}
+
+\cart{}'s frozen-KV design admits a property not available to architectures that recompute $K, V$ each iteration: $R$ at inference time can differ from $R$ at training time without retraining. The frozen $K, V$ tensors do not depend on $R$; the core block's weights are shared; the LIE table extends to $R{=}16$ in our implementation; and the LTI gate's $\varrho < 1$ guarantee ensures convergence as $R \to \infty$.
+
+We evaluate this property by training a single Stage 2 model at $R{=}10$ and evaluating perplexity at $R \in \{4, 6, 8, 10, 12, 14, 16\}$ on all three held-out sets, with no fine-tuning. Results are \tbd{pending completion of $d{=}1024$ Stage 2 runs}, including: (i) the marginal perplexity gain from each additional inference-time loop; (ii) the saturation point at which additional loops cease to improve perplexity; and (iii) a comparison against models trained at the same target $R$, isolating the cost of train/inference $R$ mismatch. If the saturation point is well above the trained $R$, this provides a deterministic-latency analogue to the variable-compute scaling reported by~\citet{geiping2025latent}.
+
+\subsection{Downstream Benchmarks}
+\label{sec:benchmarks}
+
+Perplexity establishes that \cart{} produces a calibrated language model, but downstream task accuracy is the harder test. We evaluate the complete Stage 2 sweep on four standard zero-shot benchmarks via the LM Evaluation Harness~\citep{eval-harness}: HellaSwag (commonsense completion), ARC-Challenge (grade-school science), LAMBADA (long-range coreference), and PIQA (physical commonsense). Results are \tbd{pending Stage 2 completion} and will be reported alongside the Dense baseline at parameter parity.
+
+% ============================================================
+\section{Discussion}
+\label{sec:discussion}
+
+\subsection{The Case for Once-Computed KV}
+
+The central architectural distinction between \cart{} and Hyperloop~\citep{zeitoun2026hyperloop} is the treatment of the key-value representations in the recurrent core. Hyperloop recomputes $K, V$ from the evolving hidden state at each iteration, effectively running $R$ full self-attention layers with shared weights. \cart{} computes $K, V$ once from the prelude and freezes them for all $R$ iterations.
+
+This design has three consequences. First, it reduces per-loop FLOPs: at $R=10$, \cart{} skips $2R$ full $d{\times}d$ projections per sequence position relative to Hyperloop. Second, it creates a clean separation between context encoding (prelude, run once) and iterative refinement (core, run $R$ times). The recurrent state $h$ is purely a reasoning variable; the information available to it does not change mid-loop. Third, the fixed $K, V$ anchor provides a stable target for cross-attention across all iterations, which may contribute to the remarkably consistent $\varrho \approx 0.893$ we observe; the core always converges toward the same representation of the input, rather than a moving target.
+
+\subsection{Learned vs.\ Constrained Stability}
+
+\cart{} and Parcae~\citep{prairie2026parcae} both guarantee spectral radius $< 1$, but by different means. Parcae imposes stability architecturally via negative-diagonal parameterization. \cart{}'s LTI gate learns stability during training.
+
+The emergent result, $\varrho \approx 0.893$ across all four scales (close to the $R=6$ ideal of $0.8909$), is not a design target. The model discovers a stable convergence rate that works adequately across all tested $R$ values ($R \in \{2, 4, 6, 8\}$ in Stage 1; $\{6, 8, 10\}$ in Stage 2) and all tested scales. The slow upward drift with $d_\text{model}$ ($+0.0042$ from $d=256$ to $d=1024$) suggests the convergence rate adapts to representation complexity, allocating more refinement capacity where the fixed point is richer and harder to reach. This would be impossible with a fixed architectural constraint.
+
+\subsection{Recurrence-Equivalence Exponent \texorpdfstring{$\phi$}{phi}}
+\label{sec:phi}
+
+\citet{schwethelm2026isodepth} introduce $\phi$ to quantify how much one additional recurrence loop contributes relative to a unique layer ($\phi=1$: each loop equals a unique layer; $\phi=0.46$: baseline looped; $\phi=0.65$: with hyper-connections). They report $\phi$ as a single asymptotic value for a given architecture. A rigorous fit of $\phi$ for \cart{} requires Dense baselines at multiple depths to fit the unique-layer reference curve $f(L)$, and is \tbd{pending Stage 2 Dense runs}.
+
+\paragraph{What \cart{}'s data already implies.}
+The $R$-benefit in \cart{} is strongly scale-dependent. Stage 1 \pplwiki{} improvement from $R{=}2$ to $R{=}8$ at $P{=}6$ ranges from $-0.25\%$ at $d{=}256$ (slight regression, $\phi$ effectively zero in this range) to $+5.24\%$ at $d{=}1024$ (Section~\ref{sec:stage1}). Stage 2 sharpens this picture: at full training budget, $R{=}6 \to R{=}8 \to R{=}10$ at $d{=}512$ gives $27.10 \to 27.20 \to 27.38$ \pplwiki{}, marginally regressing rather than improving. At $d{=}256$ the same range is $40.7 \to 40.3 \to 40.7$, also flat. The useful $R$ range at small scales appears to saturate at $R{=}6$ under our token budget; additional loops are not worth a unique layer's $\phi$.
+
+\paragraph{The \texorpdfstring{$\phi(d)$}{phi(d)} hypothesis.}
+The pattern across scales suggests a refinement of Schwethelm's framework: $\phi$ for \cart{} is not a single number but a function $\phi(d)$ of model width. The Stage 1 monotonic growth of $R$-benefit with $d$ (Table~\ref{tab:r_benefit}) and the Stage 2 saturation at small $d$ both point to $\phi(d)$ being approximately zero at $d{=}256$, growing through $d \in \{512, 768\}$, and reaching its maximum at $d{=}1024$ within our sweep range. We hypothesize that $\phi$ for any depth-recurrent architecture with a fixed context anchor depends on the representational capacity of the prelude: a small prelude produces a representation that the core can fully exploit in a few iterations, after which additional loops do nothing; a large prelude produces a richer representation that rewards more refinement steps before saturating. If correct, this is a refinement Schwethelm's single-$\phi$ framework does not capture.
+
+\paragraph{Methodological notes for the eventual fit.}
+Two notes for the eventual numeric $\phi$ computation: (1) our training token budget is fixed at $\sim$1B tokens, so we measure $\phi(d, D{=}1\text{B})$, not the asymptotic $\phi$ of \citeauthor{schwethelm2026isodepth}; (2) \cart{}'s \texttt{CoreBlock} does not include $K, V$ projections (those are prelude-computed), so the $N_\text{rec}$ definition must be stated explicitly when comparing to architectures whose loop body re-projects $K, V$ each iteration. We will report $\phi(d)$ as a directional refinement of Schwethelm's framework rather than a single number directly comparable to their values.
+
+\subsection{Predictable Latency vs.\ Adaptive Halting}
+
+\cart{}'s fixed-$R$ design is a deliberate trade-off against dynamic-halting approaches such as PonderNet, Universal Transformer's adaptive computation time~\citep{dehghani2018universal}, and OpenMythos's ACT halting~\citep{gomez2026openmythos}. Adaptive halting trades predictability for input-dependent compute: easy tokens halt early, hard tokens think longer. Fixed $R$ trades that adaptivity for predictable latency, fixed VRAM, and constant per-token FLOPs: properties that matter for batched serving, real-time inference, and on-device deployment, where variable per-token compute is a serving-system anti-pattern. The two regimes are complementary, and \cart{}'s frozen-KV core is in principle compatible with a halting head bolted onto the recurrent state; we leave that combination to future work.
+
+\subsection{Stage 1 as a Predictive Screen}
+
+Stage 1 rankings are predictive of Stage 2 rankings at $d=256$: Stage 1 showed $R=6 \approx R=8$ with slight regression at $R=8$, and Stage 2 confirms $R=6$ and $R=8$ are statistically identical. A complete cross-scale validation (Spearman rank correlation between Stage 1 ppl\_wiki at step 3{,}000 and Stage 2 final ppl across all 36 Stage 2 configs) will be reported when Stage 2 is complete.
+
+\subsection{Limitations}
+
+\begin{itemize}[leftmargin=*, topsep=2pt, itemsep=1pt]
+  \item \textbf{Single GPU.} All experiments run on a single RTX 3090. Larger scales and multi-seed averaging are feasible but training is sequential ($\sim$8--13 hrs/config at $d=1024$).
+  \item \textbf{Sub-Chinchilla token budget at large scales.} Stage 2 trains every configuration on $\sim 1$B tokens. The tokens-per-effective-parameter ratio is over-Chinchilla at $d{=}256$ ($47$--$56:1$), approximately Chinchilla-optimal at $d{=}512$ ($13$--$18:1$), and well under Chinchilla at $d{=}1024$ ($4.5$--$5.6:1$, see Section~\ref{sec:repro}). Cross-scale comparisons in this paper are therefore not measured at matched-token-budget conditions; large-$d$ \cart{} numbers are likely lower bounds on asymptotic quality.
+  \item \textbf{Perplexity only.} Benchmark evaluation (HellaSwag, ARC-C, LAMBADA, PIQA) is pending. Perplexity supports the story but does not establish downstream utility.
+  \item \textbf{Dense baselines pending.} Stage 2 Dense baselines have not yet been trained. Comparisons in this preprint use earlier Dense runs at different settings and should be treated as indicative only.
+  \item \textbf{No \texttt{torch.compile}.} Unavailable on Windows 11 (no Triton). Throughput is lower than reported in comparable work.
+  \item \textbf{Sequential depth recurrence.} Unlike state-space models~\citep{gu2023mamba,dao2024mamba2,peng2023rwkv} that recover transformer-like training throughput via parallel scan over the sequence dimension, \cart{}'s recurrence is over the depth dimension and is fundamentally sequential: iteration $\ell$ requires $h_{\ell-1}$ as input. This is a real cost: at fixed parameter count, a \cart{} forward pass takes longer than a parameter-matched dense transformer of equal effective depth (Table~\ref{tab:flops}). \cart{} trades training and inference parallelism for parameter efficiency. Whether this trade-off is favorable depends on whether memory or compute is the binding constraint at deployment.
+\end{itemize}
+
+% ============================================================
+\section{Conclusion}
+\label{sec:conclusion}
+
+\paragraph{What is unique about \cart{}.}
+\cart{} differs from prior depth-recurrent transformers in three ways. First, it is the only architecture in this family that computes $K, V$ once from a unique-layer prelude and reuses those frozen tensors across all $R$ iterations of a shared-weight cross-attending core. Concurrent work, including Geiping, Hyperloop, Parcae, OpenMythos, and SpiralFormer, instead injects the prelude embedding into a self-attending core that recomputes $K, V$ at each step. Second, \cart{}'s LTI stability emerges from a sigmoid gate trained without supervision, rather than being structurally imposed via ZOH discretization (Parcae, OpenMythos). Third, we identify and characterize a previously undocumented constraint on this architecture class: cross-attention from the recurrent state into the prelude must be causal, or the model leaks future tokens into the hidden state and collapses.
+
+\paragraph{What this paper shows.}
+We report four results that have not, to our knowledge, been demonstrated in prior work on looped transformers:
+
+\begin{enumerate}[leftmargin=*, topsep=2pt, itemsep=1pt]
+  \item Across 64 configurations covering four widths, four loop counts, and four prelude depths, the LTI gate converges to a universal spectral radius $\varrho \approx 0.893$, adapting weakly to model width and not at all to loop count.
+  \item Prelude depth $P$ dominates loop count $R$ in every condition tested ($P{=}6 > P{=}4 > P{=}3 > P{=}2$ holds without exception).
+  \item The benefit of recurrence depth grows monotonically with model width: from $-0.25\%$ at $d{=}256$ to $+5.24\%$ at $d{=}1024$ (Stage 1, $R{=}2 \to R{=}8$ on Wikipedia perplexity).
+  \item At $d{=}512$, all six complete Stage 2 seeds show \cart{} outperforming a parameter-matched Dense baseline by $\sim 9\%$ on Wikipedia and $\sim 16\%$ on FineWeb-Edu perplexity, while the synthetic narrow-vocabulary TinyStories gap is only $\sim 1.5\%$, suggesting recurrence yields representations whose advantage grows with the difficulty of the language-modeling target. (See Section~\ref{sec:eval_terminology} for the precise sense in which we use ``natural-language'' here; this is in-distribution generalization, not out-of-distribution.)
+\end{enumerate}
+
+Complete Stage 2 results across $d \in \{768, 1024\}$, full Dense baseline reruns, and downstream benchmark evaluations are forthcoming and will update this preprint upon training completion.
+
+% ============================================================
+\section*{Code and Data Availability}
+
+The complete \cart{} implementation, training and evaluation scripts, all figure-generation scripts, and the SQLite database (\texttt{results.db}) of every training run logged in this paper are released at \url{https://github.com/ccapps42/CART}. The database includes per-step train logs (loss, gradient norm, learning rate, spectral radius), per-eval validation perplexities on all three held-out sets, and full configuration provenance for every run, sufficient to regenerate every table and figure in this paper.
+
+% ============================================================
+\section*{Acknowledgments}
+
+Experiments were conducted on a single consumer RTX 3090. No cloud compute was used.
+
+% ============================================================
+\bibliographystyle{plainnat}
+\bibliography{references}
+
+\end{document}

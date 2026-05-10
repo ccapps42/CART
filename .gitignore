@@ -4,8 +4,7 @@ __pycache__/
 *.pyo
 
 # Large binary data files (regenerate with data/build_bins.py)
-data/*.bin
-data/val/*.bin
+data/**/*.bin
 data/hf_cache/
 
 # Model checkpoints
@@ -16,8 +15,23 @@ checkpoints/
 *.db-shm
 *.db-wal
 
-# Generated figures (regenerate with plot/plot_sweep.py)
-figures/
+# Generated figure outputs (sources are tracked, regenerate via figures/gen_*.py)
+figures/*.png
+figures/*.pdf
+
+# LaTeX compile artifacts
+paper/*.aux
+paper/*.bbl
+paper/*.blg
+paper/*.log
+paper/*.out
+paper/*.synctex.gz
+paper/cart_paper.pdf
+
+# Screenshots / scratch images at repo root
+/Screenshot*.jpg
+/Screenshot*.jpeg
+/Screenshot*.png
 
 # Generated sweep outputs
 sweep/stage2_configs.json
