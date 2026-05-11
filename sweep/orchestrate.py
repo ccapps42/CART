@@ -35,10 +35,10 @@ def open_db(db_path: str) -> sqlite3.Connection:
 
 def get_pending(conn, stage: int, hardware: str):
     return conn.execute(
-        """SELECT config_id, d_model, n_loops, n_prelude
+        """SELECT config_id, d_model, n_loops, n_prelude, seed
            FROM configs
            WHERE stage=? AND hardware=? AND status='pending'
-           ORDER BY d_model, n_loops, n_prelude""",
+           ORDER BY d_model, n_loops, n_prelude, seed""",
         (stage, hardware),
     ).fetchall()
 
