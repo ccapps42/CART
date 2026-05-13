@@ -78,7 +78,7 @@ This paper reports four findings about looped transformers that, to our knowledg
 \begin{enumerate}[leftmargin=*, topsep=2pt, itemsep=1pt]
   \item \textbf{Universal learned memory timescale.} \tbd{Stage 2 results supersede the original Stage 1 claim: at full training budget, $\varrho$ settles in the narrower band $[0.79, 0.82]$ rather than at $\varrho \approx 0.893$, and shows weak dependence on $R$ that Stage 1's 3{,}000-step measurement missed. Awaiting d=1024 Stage 2 completion to finalize the corrected claim.} Across all 64 Stage 1 configurations (four model widths $d \in \{256, 512, 768, 1024\}$ with $R \in \{2, 4, 6, 8\}$ and $P \in \{2, 3, 4, 6\}$), the LTI gate's spectral radius converges to $\varrho \approx 0.893$, indistinguishable from the $R{=}6$ ``ideal'' value $0.5^{1/R} = 0.8909$. The convergence rate adapts gradually with model width ($+0.0042$ from $d{=}256$ to $d{=}1024$) but is essentially insensitive to loop count.
   \item \textbf{Prelude depth dominates loop count.} The hyperparameter ordering $P{=}6 > P{=}4 > P{=}3 > P{=}2$ holds without exception across all $R$ values and all four scales. The pattern, that representational depth in the encoder matters more than recurrence depth in the core, has not been quantified across scales in prior work.
-  \item \textbf{The benefit of recurrence depth grows monotonically with model width.} The improvement from $R{=}2$ to $R{=}8$ ranges from $-0.25\%$ at $d{=}256$ (slight regression) to $+5.24\%$ at $d{=}1024$. This predicts that the value of looping increases with scale, a direction that the iso-depth scaling literature~\citep{schwethelm2026isodepth} measures via $\phi$ but has not previously characterized as a function of model width.
+  \item \textbf{The benefit of recurrence depth grows monotonically with model width.} \tbd{This claim is from Stage 1 (3{,}000-step, very sub-Chinchilla measurements). Stage 2 partial data (d $\leq$ 768 complete, 1B tokens, still sub-Chinchilla on effective params at d=768) shows R-benefit absent or slightly negative within $R \in \{6, 8, 10\}$, contradicting the Stage 1 prediction. Whether R-benefit reappears at Chinchilla-class training is the subject of a planned extended-training experiment; the Stage 1 claim and the Stage 2 reinterpretation will be reconciled once that experiment completes.} The improvement from $R{=}2$ to $R{=}8$ ranges from $-0.25\%$ at $d{=}256$ (slight regression) to $+5.24\%$ at $d{=}1024$. This predicts that the value of looping increases with scale, a direction that the iso-depth scaling literature~\citep{schwethelm2026isodepth} measures via $\phi$ but has not previously characterized as a function of model width.
   \item \textbf{Natural-language advantage at parameter parity.} At $d{=}512$ with all 6 complete Stage 2 seeds, \cart{} outperforms a parameter-matched Dense baseline by $\sim 9\%$ on Wikipedia perplexity and $\sim 16\%$ on FineWeb-Edu perplexity, with only $\sim 1.5\%$ improvement on the synthetic narrow-vocabulary TinyStories set. The natural-language-vs-synthetic gap (defined precisely in Section~\ref{sec:eval_terminology}) suggests fixed-point recurrence extracts representations that benefit harder language-modeling targets more than they benefit easier ones.
 \end{enumerate}
 
@@ -257,16 +257,32 @@ Dense baselines (7 layers, $P=0$, standard MHA + SwiGLU) will be trained at iden
 
 \paragraph{Training-data ordering.} The training corpus \texttt{stage2\_train.bin} is a fixed pre-shuffled file consumed in a single pass. Different seeds therefore see the same data in the same order; randomness affects only weight initialization and dropout-equivalent stochastic operations. This isolates seed sensitivity to model initialization rather than data order.
 
-\paragraph{Token budget and Chinchilla compliance.} Stage 2 trains every configuration on $\sim 1$B tokens. The corresponding tokens-per-effective-parameter ratio varies across the sweep:
+\paragraph{Token budget and Chinchilla compliance.} Stage 2 trains every configuration on $\sim 1$B tokens. \cart{}'s weight sharing makes Chinchilla compliance ambiguous: a single core block is stored once but applied $R$ times, so the stored parameter count and the effective parameter count differ by up to $1.8\times$ at our scales. We report both ratios because they answer different questions: \emph{stored} captures inference-time memory and HuggingFace download size; \emph{effective} captures compute-equivalent capacity and is the right denominator for predicting where training loss saturates (Chinchilla's $6N$ FLOPs-per-token derivation uses the effective compute count for a standard transformer).
 
-\begin{itemize}[leftmargin=*, topsep=2pt, itemsep=1pt]
-  \item $d{=}256$: $47$--$56:1$ — over-Chinchilla (smaller models trained well past the $20:1$ optimum).
-  \item $d{=}512$: $13$--$18:1$ — approximately Chinchilla-optimal at this scale.
-  \item $d{=}768$: $7$--$10:1$ — sub-Chinchilla.
-  \item $d{=}1024$: $4.5$--$5.6:1$ — well under Chinchilla, at roughly $25\%$ of the optimal token budget.
-\end{itemize}
+\begin{table}[htbp]
+\centering
+\caption{Stage 2 Chinchilla compliance per $(d, R)$ at 1B tokens, measured against both stored and effective parameters. Chinchilla-optimal target is $20{:}1$.}
+\label{tab:chinchilla}
+\footnotesize
+\begin{tabular}{rrrrrrr}
+\toprule
+$d$ & $R$ & Stored (M) & Effective (M) & Stored ratio & Effective ratio & \% Chinchilla (eff) \\
+\midrule
+ 256 & 6  & 14.4  & 18.0  & 69:1 & 56:1 & 278\% (over) \\
+ 256 & 10 & 14.4  & 21.4  & 69:1 & 47:1 & 234\% (over) \\
+ 512 & 6  & 41.1  & 55.5  & 24:1 & 18:1 &  90\% (near) \\
+ 512 & 10 & 41.1  & 76.5  & 24:1 & 13:1 &  65\% (sub)  \\
+ 768 & 6  & 75.3  & 104.8 & 13:1 & 10:1 &  48\% (sub)  \\
+ 768 & 10 & 75.3  & 146.3 & 13:1 &  7:1 &  34\% (sub)  \\
+1024 & 6  & 125.1 & 178.8 &  8:1 &  6:1 &  28\% (sub)  \\
+1024 & 10 & 125.1 & 221.8 &  8:1 &  5:1 &  23\% (sub)  \\
+\bottomrule
+\end{tabular}
+\end{table}
 
-This means cross-scale comparisons in this paper are not measured at matched-Chinchilla budgets. The $d{=}1024$ models in particular are likely to improve substantially with more tokens; their reported perplexities are lower bounds on quality, not asymptotic values. For context, recent sub-1B language models trained for downstream deployment are typically far over-Chinchilla: TinyLlama-1.1B~\citep{zhang2024tinyllama} trains on 3T tokens ($\sim 2700{:}1$), Pythia-160M~\citep{biderman2023pythia} trains on 300B tokens ($\sim 1875{:}1$). Our $4.5{-}56{:}1$ range reflects the goals of an architectural sweep rather than a deployment-targeted release. We discuss this further in Limitations (Section~\ref{sec:discussion}).
+Two consequences follow. First, cross-scale comparisons in this paper are not measured at matched-Chinchilla budgets on either parameter count; $d \geq 768$ configurations are firmly sub-Chinchilla on both measures, and the $d{=}1024$ models in particular run at $23$--$28\%$ of optimal training. Their reported perplexities are lower bounds on quality, not asymptotic values. Second, claims about the limiting behavior of \cart{}'s recurrence---whether more $R$ keeps helping at full training, whether the spectral radius converges to a stable value at full training---cannot be made from Stage 2 data alone. The extended-training run (Section~\ref{sec:discussion}) is the test that addresses these questions.
+
+For context, recent sub-1B language models trained for downstream deployment are typically far over-Chinchilla on both measures: TinyLlama-1.1B~\citep{zhang2024tinyllama} trains on 3T tokens ($\sim 2700{:}1$), Pythia-160M~\citep{biderman2023pythia} trains on 300B tokens ($\sim 1875{:}1$). Our $5{-}278\%$ range reflects the goals of an architectural sweep rather than a deployment-targeted release. We discuss this further in Limitations (Section~\ref{sec:discussion}).
 
 \paragraph{Code, training scripts, and database.} The full implementation, all training and evaluation scripts, the SQLite database of every run (\texttt{results.db}), and the figure-generation scripts are released at the URL in the title footnote.
 
@@ -351,6 +367,8 @@ $d$ & $R^*$ & $P^*$ & \pplwiki & \ppltiny & \ppledu & $\varrho$ \\
 In every case, $P=6$ is best. The $P$ ordering ($P=6 > P=4 > P=3 > P=2$) holds without exception across all $R$ values and all four scales.
 
 \subsection{R Benefit Increases with Scale}
+
+\tbd{The Stage 1 finding reported below ($R$-benefit grows from $-0.25\%$ at $d{=}256$ to $+5.24\%$ at $d{=}1024$) is partially contradicted by Stage 2 partial data: at the longer Stage 2 training budget, R is flat to slightly negative across $R \in \{6, 8, 10\}$ at $d \leq 768$. All Stage 2 conditions at $d \geq 768$ remain sub-Chinchilla on effective parameters (Table~\ref{tab:chinchilla}), so the Stage 2 observation does not yet rule out R-benefit at fuller training. The extended-training experiment (Section~\ref{sec:discussion}) is the decisive test. This subsection will be revised once that experiment completes.}
 
 Table~\ref{tab:r_benefit} shows the \pplwiki{} improvement from $R=2$ to $R=8$ within the $P=6$ slice. At $d=256$, higher $R$ slightly \emph{hurts} ($-0.25\%$, i.e., regresses). At $d=1024$, the same gain is $+5.24\%$. The benefit of depth recurrence increases monotonically with model width.
 
@@ -571,13 +589,15 @@ $d$ & Best $R$ & HellaSwag & ARC-C & LAMBADA acc (ppl) & PIQA & Dense match? \\
 \midrule
  256 &  8 & 26.49 & 21.59 & 8.66 (2079) & 54.79 & \tbd{} \\
  512 &  6 & 27.10 & 22.87 & 16.15 (507) & 55.60 & \tbd{} \\
- 768 & \tbd{} & \tbd{} & \tbd{} & \tbd{} & \tbd{} & \tbd{} \\
+ 768 &  6 & 27.05 & 22.87 & 20.42 (251) & 57.67 & \tbd{} \\
 1024 & \tbd{} & \tbd{} & \tbd{} & \tbd{} & \tbd{} & \tbd{} \\
 \bottomrule
 \end{tabular}
 \end{table}
 
-These four benchmarks together cover commonsense reasoning, scientific factual recall, long-range linguistic coherence, and physical-world plausibility---the dimensions on which a small language model's competence is most informatively measured. Reference: GPT-2 small (124M) achieves $\sim 29\%$ HellaSwag, $\sim 22\%$ ARC-C, $\sim 46\%$ LAMBADA accuracy, $\sim 62\%$ PIQA at this parameter scale. Our $d{=}1024$ configurations have $\sim 180$--$220$M effective parameters and a smaller token budget; we expect benchmark accuracies in a similar range, with the central comparison being CART-vs-Dense at parameter parity rather than CART-vs-published-models.
+These four benchmarks cover commonsense reasoning (HellaSwag), scientific factual recall (ARC-C), long-range linguistic coherence (LAMBADA), and physical-world plausibility (PIQA). The cross-scale data already complete reveals a divided pattern at sub-1B parameter counts. LAMBADA and PIQA scale smoothly with $d$: LAMBADA accuracy rises from $8.66\%$ at $d{=}256$ through $16.15\%$ at $d{=}512$ to $20.42\%$ at $d{=}768$, and its perplexity halves at each step ($2079 \to 507 \to 251$); PIQA accuracy rises monotonically from $54.79\%$ to $57.67\%$. HellaSwag and ARC-C, by contrast, show a flat plateau between $d{=}512$ and $d{=}768$ ($27.10\%$ vs.\ $27.05\%$ on HellaSwag; $22.87\%$ vs.\ $22.87\%$ on ARC-C). These benchmarks test capabilities that are widely reported to emerge at scale rather than improving smoothly, and our results are consistent with the model remaining below the capability threshold at $d{=}768$.
+
+For reference, GPT-2 small (124M parameters, $\sim 8$B training tokens) reports approximately $29\%$ HellaSwag, $22\%$ ARC-C, $46\%$ LAMBADA accuracy, and $62\%$ PIQA. CART at $d{=}768$ already matches GPT-2 small on ARC-C with $\sim 105$M effective parameters and one-eighth the training data. LAMBADA accuracy remains substantially below GPT-2 small's, which we attribute primarily to the training-token gap. Given the d=512 to d=768 plateau on HellaSwag/ARC-C, the $d{=}1024$ results may or may not cross the threshold for those tasks at $\sim 1$B training tokens; the extended-training experiment (Section~\ref{sec:discussion}) is the cleaner test for whether additional capability emerges with more training on the same architecture. The central paper comparison remains CART-vs-Dense at parameter parity rather than CART-vs-published-models.
 
 \paragraph{Few-shot evaluation at $d{=}1024$.}
 In addition to zero-shot scores, we report 5-shot accuracy on the best $d{=}1024$ model on the same four tasks (Table~\ref{tab:fewshot}). 5-shot evaluation tests whether the model can use in-context examples to improve task accuracy---an emergent capability that is typically undetectable at sub-100M parameter counts but begins to appear at $\sim 200$M effective parameters. We omit few-shot evaluation at $d \in \{256, 512, 768\}$ because zero-shot accuracy at those scales is already near random, leaving no measurable headroom for in-context examples to help.
@@ -639,7 +659,7 @@ Stage 1 rankings are predictive of Stage 2 rankings at $d=256$: Stage 1 showed $
 
 \begin{itemize}[leftmargin=*, topsep=2pt, itemsep=1pt]
   \item \textbf{Single GPU.} All experiments run on a single RTX 3090. Larger scales and multi-seed averaging are feasible but training is sequential ($\sim$8--13 hrs/config at $d=1024$).
-  \item \textbf{Sub-Chinchilla token budget at large scales.} Stage 2 trains every configuration on $\sim 1$B tokens. The tokens-per-effective-parameter ratio is over-Chinchilla at $d{=}256$ ($47$--$56:1$), approximately Chinchilla-optimal at $d{=}512$ ($13$--$18:1$), and well under Chinchilla at $d{=}1024$ ($4.5$--$5.6:1$, see Section~\ref{sec:repro}). Cross-scale comparisons in this paper are therefore not measured at matched-token-budget conditions; large-$d$ \cart{} numbers are likely lower bounds on asymptotic quality.
+  \item \textbf{Sub-Chinchilla token budget at large scales.} Stage 2 trains every configuration on $\sim 1$B tokens. The tokens-per-effective-parameter ratio is over-Chinchilla at $d{=}256$ ($47$--$56:1$), approximately Chinchilla-optimal at $d{=}512$ ($13$--$18:1$), and well under Chinchilla at $d{=}1024$ ($4.5$--$5.6:1$, see Section~\ref{sec:repro} and Table~\ref{tab:chinchilla}). Cross-scale comparisons in this paper are therefore not measured at matched-token-budget conditions; large-$d$ \cart{} numbers are likely lower bounds on asymptotic quality. \tbd{Several interpretive claims in this paper---the $R$-benefit pattern across scales, the spectral radius behavior, the per-$d$ scaling exponent---are sensitive to whether the d $\geq$ 768 models are near-converged or still in steep descent on the natural-language sets. We plan to discriminate these by extending the best d=1024 model to 2.5B tokens (stored-Chinchilla) and re-running the R-benefit and variable-R analyses; results will update this preprint once that experiment completes.}
   \item \textbf{Perplexity only.} Benchmark evaluation (HellaSwag, ARC-C, LAMBADA, PIQA) is pending. Perplexity supports the story but does not establish downstream utility.
   \item \textbf{Dense baselines pending.} Stage 2 Dense baselines have not yet been trained. Comparisons in this preprint use earlier Dense runs at different settings and should be treated as indicative only.
   \item \textbf{No \texttt{torch.compile}.} Unavailable on Windows 11 (no Triton). Throughput is lower than reported in comparable work.
