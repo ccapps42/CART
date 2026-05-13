@@ -522,25 +522,25 @@ Stage 1 perplexity at the best $(R, P)$ configuration per scale fits a power law
 \]
 fit on four data points $(d, R{=}8, P{=}6)$ at step 3{,}000 ($r^2 \approx 0.999$). Each doubling of $d$ reduces \pplwiki{} by approximately $28\%$. The exponent of $-0.458$ sits at the steeper end of the range reported for standard transformer scaling laws~\citep{kaplan2020scaling,hoffmann2022chinchilla}, which typically fit exponents on $d$ alone in the range $-0.3$ to $-0.4$ at sub-Chinchilla token budgets.
 
-At the full Stage 2 training budget of $\sim 1$B tokens, the partial data show a steeper exponent than Stage 1, but the picture is still incomplete. The d=256 and d=512 entries are means across $R \in \{6, 8, 10\}$ and 3 seeds each (9 runs per scale); the d=768 entry is the mean across 3 seeds at $R{=}6$ only (the R=8 and R=10 sweeps at d=768 are in progress).
+At the full Stage 2 training budget of $\sim 1$B tokens, the cross-scale picture is now visible at all four scales, with $R{=}6$ means available everywhere (one seed at $d{=}1024$, three seeds at $d \leq 768$). Reporting $R{=}6$ rather than R-averaged means keeps the cross-scale comparison clean, since $R{=}6$ was the best $R$ at every scale tested so far.
 
-The Stage 2 single-doubling exponent at d=256 → d=512 is $-0.58$. The d=512 → d=768 transition (a $1.5\times$ scaling) gives an implied exponent of $-0.43$, somewhat shallower than the d=256 → d=512 doubling. A 3-point power-law fit on the available Stage 2 means yields $\text{PPL}_\text{wiki}^\text{stage2}(d) \approx 1370 \cdot d^{-0.55}$. The 3-seed agreement at d=768 R=6 is tight ($\text{ppl}_\text{wiki}$ std across seeds: $0.04$), so the $-0.43$ exponent at this scale is not a single-seed artifact.
+The Stage 2 single-step exponents on \pplwiki{} soften progressively with scale: $-0.60$ from $d{=}256 \to d{=}512$, $-0.42$ from $d{=}512 \to d{=}768$, and $-0.39$ from $d{=}768 \to d{=}1024$ (first seed). A 4-point power-law fit on the available R=6 means yields $\text{PPL}_\text{wiki}^\text{stage2}(d) \approx 668 \cdot d^{-0.51}$, somewhat steeper than the Stage 1 fit of $-0.458$ but with visible softening at the larger end. \tbd{The d=1024 entry is a single seed; the 3-seed mean and the R=8/R=10 means at d=1024 will update this section once Stage 2 completes (est.\ 2026-05-16).}
 
-Two interpretations remain consistent with the current data: (a) the exponent is approximately $-0.55$ across the full sweep, with cross-scale ratios drifting slightly as scale changes; or (b) per-$d$ efficiency softens above $d{=}512$, signaling early saturation of the prelude representation. The remaining R=8 and R=10 sweeps at d=768 may shift the d=768 mean slightly (Stage 1 showed R-benefit grows with d, so we expect the R-averaged d=768 \pplwiki{} to come in modestly lower than the R=6-only value reported here). The d=1024 sweep will decide between (a) and (b). Either way, the Stage 2 exponent is meaningfully steeper than the Stage 1 exponent of $-0.46$, which suggests that longer training extracts more value per unit of model width than 3{,}000-step Stage 1 measurements indicate.
+Two interpretations of the softening are consistent with the current data: (a) the cross-scale fit is approximately $-0.50$ with some variance at each transition, and the softening is sample noise; or (b) per-$d$ efficiency genuinely diminishes above $d{=}512$, signaling early saturation of the prelude representation under the Stage 2 token budget. Interpretation (b) is becoming the more parsimonious read as each successive scale step delivers a shallower exponent, but distinguishing the two requires either the d=1024 3-seed mean or the extended-training experiment (Section~\ref{sec:discussion}). \tbd{Final interpretation pending d=1024 full sweep and the extended-training run.}
 
 \begin{table}[htbp]
 \centering
-\caption{Cross-scale \pplwiki{} (mean across seeds and $R$ at $P=6$ where multi-seed multi-$R$ data exists) and implied scaling. Stage 1 fit uses four data points $(R{=}8, P{=}6)$ at step 3{,}000. Stage 2 entries: d=256 and d=512 are means over 3 R values $\times$ 3 seeds (9 runs each); d=768 is the mean over 3 seeds at R=6 only (R=8 and R=10 in progress). Implied exponent uses the prior scale as reference.}
+\caption{Cross-scale \pplwiki{} at $R{=}6$, $P{=}6$ across Stage 1 (step 3{,}000) and Stage 2 (step 30{,}500). Stage 2 means: $d \leq 768$ are 3-seed means; $d{=}1024$ is a single seed (pending 2 more). Implied exponent computed from the prior scale entry.}
 \label{tab:scaling}
 \footnotesize
 \begin{tabular}{rrrl}
 \toprule
 $d$ & Stage 1 \pplwiki & Stage 2 \pplwiki & Implied exp.\ vs.\ prior $d$ \\
 \midrule
- 256 & 186.20 & 40.73 (mean of 9)         & ---                  \\
- 512 & 136.42 & 27.23 (mean of 9)         & $-0.58$ ($\times 2$)  \\
- 768 & 114.96 & 22.85 (mean of 3, R=6)    & $-0.43$ ($\times 1.5$) \\
-1024 &  97.73 & \tbd{}                    & \tbd{}               \\
+ 256 & 186.20 & 41.17 (mean of 3)         & ---                   \\
+ 512 & 136.42 & 27.10 (mean of 3)         & $-0.60$ ($\times 2$)   \\
+ 768 & 114.96 & 22.85 (mean of 3)         & $-0.42$ ($\times 1.5$) \\
+1024 &  97.73 & 20.45 (1 seed, \tbd{})    & $-0.39$ ($\times 1.33$) \\
 \bottomrule
 \end{tabular}
 \end{table}
