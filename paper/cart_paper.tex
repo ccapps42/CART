@@ -522,25 +522,25 @@ Stage 1 perplexity at the best $(R, P)$ configuration per scale fits a power law
 \]
 fit on four data points $(d, R{=}8, P{=}6)$ at step 3{,}000 ($r^2 \approx 0.999$). Each doubling of $d$ reduces \pplwiki{} by approximately $28\%$. The exponent of $-0.458$ sits at the steeper end of the range reported for standard transformer scaling laws~\citep{kaplan2020scaling,hoffmann2022chinchilla}, which typically fit exponents on $d$ alone in the range $-0.3$ to $-0.4$ at sub-Chinchilla token budgets.
 
-At the full Stage 2 training budget of $\sim 1$B tokens, the cross-scale picture is now visible at all four scales, with $R{=}6$ means available everywhere (one seed at $d{=}1024$, three seeds at $d \leq 768$). Reporting $R{=}6$ rather than R-averaged means keeps the cross-scale comparison clean, since $R{=}6$ was the best $R$ at every scale tested so far.
+At the full Stage 2 training budget of $\sim 1$B tokens, the cross-scale picture is now available at all four scales as 3-seed $R{=}6$ means. Reporting $R{=}6$ rather than R-averaged means keeps the cross-scale comparison clean, since $R{=}6$ was the best $R$ at every scale tested so far.
 
-The Stage 2 single-step exponents on \pplwiki{} soften progressively with scale: $-0.60$ from $d{=}256 \to d{=}512$, $-0.42$ from $d{=}512 \to d{=}768$, and $-0.39$ from $d{=}768 \to d{=}1024$ (first seed). A 4-point power-law fit on the available R=6 means yields $\text{PPL}_\text{wiki}^\text{stage2}(d) \approx 668 \cdot d^{-0.51}$, somewhat steeper than the Stage 1 fit of $-0.458$ but with visible softening at the larger end. \tbd{The d=1024 entry is a single seed; the 3-seed mean and the R=8/R=10 means at d=1024 will update this section once Stage 2 completes (est.\ 2026-05-16).}
+The Stage 2 single-step exponents on \pplwiki{} soften progressively with scale: $-0.60$ from $d{=}256 \to d{=}512$, $-0.42$ from $d{=}512 \to d{=}768$, and $-0.40$ from $d{=}768 \to d{=}1024$. A 4-point power-law fit on the R=6 means yields $\text{PPL}_\text{wiki}^\text{stage2}(d) \approx 671 \cdot d^{-0.51}$, steeper than the Stage 1 fit of $-0.46$ but with visible softening at the larger end. 3-seed agreement at d=1024 R=6 is tight (std on ppl\_wiki across seeds: $0.07$, on ppl\_tiny: $0.010$). \tbd{The R=8 and R=10 sweeps at d=1024 will update the cross-R picture and may shift the per-scale best $R$ at d=1024; final scaling fit pending Stage 2 completion (est.\ 2026-05-16).}
 
 Two interpretations of the softening are consistent with the current data: (a) the cross-scale fit is approximately $-0.50$ with some variance at each transition, and the softening is sample noise; or (b) per-$d$ efficiency genuinely diminishes above $d{=}512$, signaling early saturation of the prelude representation under the Stage 2 token budget. Interpretation (b) is becoming the more parsimonious read as each successive scale step delivers a shallower exponent, but distinguishing the two requires either the d=1024 3-seed mean or the extended-training experiment (Section~\ref{sec:discussion}). \tbd{Final interpretation pending d=1024 full sweep and the extended-training run.}
 
 \begin{table}[htbp]
 \centering
-\caption{Cross-scale \pplwiki{} at $R{=}6$, $P{=}6$ across Stage 1 (step 3{,}000) and Stage 2 (step 30{,}500). Stage 2 means: $d \leq 768$ are 3-seed means; $d{=}1024$ is a single seed (pending 2 more). Implied exponent computed from the prior scale entry.}
+\caption{Cross-scale \pplwiki{} at $R{=}6$, $P{=}6$ across Stage 1 (step 3{,}000) and Stage 2 (step 30{,}500). Stage 2 entries are 3-seed means. Implied exponent computed from the prior scale entry.}
 \label{tab:scaling}
 \footnotesize
 \begin{tabular}{rrrl}
 \toprule
 $d$ & Stage 1 \pplwiki & Stage 2 \pplwiki & Implied exp.\ vs.\ prior $d$ \\
 \midrule
- 256 & 186.20 & 41.17 (mean of 3)         & ---                   \\
- 512 & 136.42 & 27.10 (mean of 3)         & $-0.60$ ($\times 2$)   \\
- 768 & 114.96 & 22.85 (mean of 3)         & $-0.42$ ($\times 1.5$) \\
-1024 &  97.73 & 20.45 (1 seed, \tbd{})    & $-0.39$ ($\times 1.33$) \\
+ 256 & 186.20 & 41.17 (mean of 3) & ---                   \\
+ 512 & 136.42 & 27.10 (mean of 3) & $-0.60$ ($\times 2$)   \\
+ 768 & 114.96 & 22.85 (mean of 3) & $-0.42$ ($\times 1.5$) \\
+1024 &  97.73 & 20.35 (mean of 3) & $-0.40$ ($\times 1.33$) \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -650,6 +650,23 @@ Two notes for the eventual numeric $\phi$ computation: (1) our training token bu
 \subsection{Predictable Latency vs.\ Adaptive Halting}
 
 \cart{}'s fixed-$R$ design is a deliberate trade-off against dynamic-halting approaches such as PonderNet, Universal Transformer's adaptive computation time~\citep{dehghani2018universal}, and OpenMythos's ACT halting~\citep{gomez2026openmythos}. Adaptive halting trades predictability for input-dependent compute: easy tokens halt early, hard tokens think longer. Fixed $R$ trades that adaptivity for predictable latency, fixed VRAM, and constant per-token FLOPs: properties that matter for batched serving, real-time inference, and on-device deployment, where variable per-token compute is a serving-system anti-pattern. The two regimes are complementary, and \cart{}'s frozen-KV core is in principle compatible with a halting head bolted onto the recurrent state; we leave that combination to future work.
+
+\subsection{Extended Training Toward Chinchilla Compliance}
+\label{sec:extended_training}
+
+The Stage 2 sweep trains every configuration on $\sim 1$B tokens, which leaves $d{=}1024$ at $23$--$28\%$ of effective-Chinchilla and $40\%$ of stored-Chinchilla (Table~\ref{tab:chinchilla}). Several interpretive claims in this paper---the cross-scale scaling exponent, the per-$R$ comparison, the spectral radius behavior at large $d$---are sensitive to whether the largest models are near-converged or still in steep descent on the natural-language sets.
+
+To address this, we resume training from the best $d{=}1024$ $R{=}10$ checkpoint and continue for an additional 45{,}750 steps to a total of 2.5B tokens (exactly $20{:}1$ on stored parameters; $9$--$11{:}1$ on effective parameters depending on $R$). The additional training data is a fresh 1.5B-token chunk built from corpus shards not used in the Stage 2 build, preserving the single-pass, no-repetition property. We resume training (rather than train from scratch) to isolate the effect of additional tokens on a known checkpoint and to keep total compute manageable ($\sim 14$ hours additional on a single RTX 3090).
+
+The extended-training run targets three specific questions:
+
+\begin{enumerate}[leftmargin=*, topsep=2pt, itemsep=1pt]
+  \item \textbf{Does perplexity continue to drop?} If \pplwiki{} at 2.5B tokens is meaningfully lower than at 1B (e.g., $> 5\%$ improvement), the Stage 2 numbers reported throughout this paper are lower bounds on asymptotic quality, and the cross-scale scaling exponents reported in Section~\ref{sec:scaling} need to be re-anchored.
+  \item \textbf{Does the spectral radius continue to decay?} The corrected Stage 2 finding is that $\varrho$ settles in $[0.79, 0.83]$ rather than the Stage 1 value of $\approx 0.893$. Whether $\varrho$ at 2.5B tokens settles further or stabilizes tells us whether the LTI gate has reached its trained value or is still adapting.
+  \item \textbf{Does $R$-benefit emerge with more training?} The Stage 1 prediction was that $R$-benefit grows with $d$. Stage 2 partial data contradicts this within $R \in \{6, 8, 10\}$. If the extended-trained $d{=}1024$ model run at $R{=}10$ outperforms the same model run at $R{=}6$ (variable-$R$ inference, Section~\ref{sec:inference_R}), the recurrent-depth-as-useful-compute thesis survives. If not, the architectural value of recurrence reduces to weight-sharing and inference-time deterministic latency.
+\end{enumerate}
+
+Results are \tbd{pending the extended-training run, est.\ 1--2 weeks after Stage 2 completion (target date 2026-05-30)}.
 
 \subsection{Stage 1 as a Predictive Screen}
 
