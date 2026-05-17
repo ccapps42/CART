@@ -34,7 +34,7 @@ from transformers import AutoTokenizer
 # ---------------------------------------------------------------------------
 # Paths
 # ---------------------------------------------------------------------------
-HF_CACHE_BASE = Path("K:/projects/OpenHobbs/data/hf_cache")
+HF_CACHE_BASE = Path("K:/data/hf_cache")
 
 TINYSTORIES_DIR = (HF_CACHE_BASE /
     "roneneldan___tiny_stories/default/0.0.0"

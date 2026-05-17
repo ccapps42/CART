@@ -16,9 +16,9 @@ from data.dataset import FixedOrderDataset
 
 TOKENIZER_NAME = "NousResearch/Llama-2-7b-hf"
 
-TINYSTORIES_DIR = Path("K:/projects/OpenHobbs/data/hf_cache/roneneldan___tiny_stories"
+TINYSTORIES_DIR = Path("K:/data/hf_cache/roneneldan___tiny_stories"
                        "/default/0.0.0/f54c09fd23315a6f9c86f9dc80f725de7d8f9c64")
-FINEWEB_DIR = Path("K:/projects/OpenHobbs/data/hf_cache/HuggingFaceFW___fineweb-edu"
+FINEWEB_DIR = Path("K:/data/hf_cache/HuggingFaceFW___fineweb-edu"
                    "/sample-10BT/0.0.0/87f09149ef4734204d70ed1d046ddc9ca3f2b8f9")
 
 
