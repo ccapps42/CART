@@ -44,7 +44,7 @@ A Parameter-Efficient Architecture with Learned Stability}
 
 % ============================================================
 \begin{abstract}
-We present \cart{} (Context-Anchored Recurrent Transformer), a parameter-efficient language model architecture that reuses a single shared core block $R$ times across depth. Unlike prior looped transformers that recompute key-value representations at every loop iteration, \cart{} computes $K$ and $V$ once from a multi-layer prelude and reuses them throughout the recurrent core via multi-head latent attention (MLA) cross-attention. This design separates context encoding from iterative refinement, reduces per-loop FLOPs, and provides a stable attention anchor for all loop iterations. Stability of the recurrent computation is ensured by a learned Linear Time-Invariant (LTI) gate, which empirically settles on a narrow range of spectral radius values across all model scales \tbd{Stage 2 final values: $\varrho \in [0.79, 0.82]$ from completed configs; awaiting d=1024 to finalize. The Stage 1 ``universal $\varrho \approx 0.893$'' claim was a 3{,}000-step artifact---rho continues to decay through full training. Stage 2 also reveals weak R-dependence not visible at Stage 1.}
+We present \cart{} (Context-Anchored Recurrent Transformer), a parameter-efficient language model architecture that reuses a single shared core block $R$ times across depth. Unlike prior looped transformers that recompute key-value representations at every loop iteration, \cart{} computes $K$ and $V$ once from a multi-layer prelude and reuses them throughout the recurrent core via multi-head latent attention (MLA) cross-attention. This design separates context encoding from iterative refinement, reduces per-loop FLOPs, and provides a stable attention anchor for all loop iterations. Stability of the recurrent computation is ensured by a learned Linear Time-Invariant (LTI) gate, which empirically settles on a narrow range of spectral radius values across all model scales ($\varrho \in [0.79, 0.83]$ at full training across all 36 configurations).
 
 We conduct a two-stage sweep across $d_{\text{model}} \in \{256, 512, 768, 1024\}$, prelude depths $P \in \{6\}$, and loop counts $R \in \{6, 8, 10\}$, training all models on $\sim$1B tokens of mixed-domain text at sequence length 1024. Stage 1 (3{,}000 steps) validates \cart{}'s design axes and screens hyperparameters. Stage 2 (30{,}500 steps) provides the primary comparison against Dense transformer baselines.
 
@@ -76,7 +76,7 @@ The core challenge is making weight-sharing work. Naive looped transformers unde
 This paper reports four findings about looped transformers that, to our knowledge, have not been demonstrated in prior work:
 
 \begin{enumerate}[leftmargin=*, topsep=2pt, itemsep=1pt]
-  \item \textbf{Universal learned memory timescale.} \tbd{Stage 2 results supersede the original Stage 1 claim: at full training budget, $\varrho$ settles in the narrower band $[0.79, 0.82]$ rather than at $\varrho \approx 0.893$, and shows weak dependence on $R$ that Stage 1's 3{,}000-step measurement missed. Awaiting d=1024 Stage 2 completion to finalize the corrected claim.} Across all 64 Stage 1 configurations (four model widths $d \in \{256, 512, 768, 1024\}$ with $R \in \{2, 4, 6, 8\}$ and $P \in \{2, 3, 4, 6\}$), the LTI gate's spectral radius converges to $\varrho \approx 0.893$, indistinguishable from the $R{=}6$ ``ideal'' value $0.5^{1/R} = 0.8909$. The convergence rate adapts gradually with model width ($+0.0042$ from $d{=}256$ to $d{=}1024$) but is essentially insensitive to loop count.
+  \item \textbf{Learned memory timescale at full training.} Across all 36 Stage 2 configurations ($d \in \{256, 512, 768, 1024\}$ with $R \in \{6, 8, 10\}$, $P{=}6$, three seeds each, $\sim$1B tokens), the LTI gate's spectral radius settles in a narrow band, $\varrho \in [0.79, 0.83]$. Within this band, $\varrho$ rises monotonically with both $d$ ($+0.033$ from $d{=}256$ to $d{=}1024$ at $R{=}6$) and $R$ ($+0.008$ to $+0.009$ per pair of additional loops at fixed $d$). The Stage 1 paper draft reported a tighter ``universal $\varrho \approx 0.893$'' across 64 configurations at step 3{,}000; that value is a mid-training transient, and $\varrho$ continues to decay through full training (Section~\ref{sec:spectral}).
   \item \textbf{Prelude depth dominates loop count.} The hyperparameter ordering $P{=}6 > P{=}4 > P{=}3 > P{=}2$ holds without exception across all $R$ values and all four scales. The pattern, that representational depth in the encoder matters more than recurrence depth in the core, has not been quantified across scales in prior work.
   \item \textbf{The benefit of recurrence depth grows monotonically with model width.} \tbd{This claim is from Stage 1 (3{,}000-step, very sub-Chinchilla measurements). Stage 2 partial data (d $\leq$ 768 complete, 1B tokens, still sub-Chinchilla on effective params at d=768) shows R-benefit absent or slightly negative within $R \in \{6, 8, 10\}$, contradicting the Stage 1 prediction. Whether R-benefit reappears at Chinchilla-class training is the subject of a planned extended-training experiment; the Stage 1 claim and the Stage 2 reinterpretation will be reconciled once that experiment completes.} The improvement from $R{=}2$ to $R{=}8$ ranges from $-0.25\%$ at $d{=}256$ (slight regression) to $+5.24\%$ at $d{=}1024$. This predicts that the value of looping increases with scale, a direction that the iso-depth scaling literature~\citep{schwethelm2026isodepth} measures via $\phi$ but has not previously characterized as a function of model width.
   \item \textbf{Natural-language advantage at parameter parity.} At $d{=}512$ with all 6 complete Stage 2 seeds, \cart{} outperforms a parameter-matched Dense baseline by $\sim 9\%$ on Wikipedia perplexity and $\sim 16\%$ on FineWeb-Edu perplexity, with only $\sim 1.5\%$ improvement on the synthetic narrow-vocabulary TinyStories set. The natural-language-vs-synthetic gap (defined precisely in Section~\ref{sec:eval_terminology}) suggests fixed-point recurrence extracts representations that benefit harder language-modeling targets more than they benefit easier ones.
@@ -107,7 +107,7 @@ This paper presents \cart{}'s design, a systematic Stage 1 sweep across 64 confi
 \citet{gomez2026openmythos} is an open-source reconstruction of a hypothesized recurrent-depth architecture combining MLA, hyper-connections, loop-index embeddings, and LTI-stable injection. It is the most architecturally similar prior work to \cart{}. Two differences are architecturally significant. First, OpenMythos recomputes $K, V$ from the evolving hidden state at each loop iteration; \cart{} computes $K, V$ once from the prelude and holds them fixed. Second, OpenMythos implements LTI stability via ZOH discretization of a learned state matrix (the same mechanism as Parcae), whereas \cart{}'s sigmoid gate learns its convergence rate without structural constraints. \cart{} was informed by OpenMythos and shares its component vocabulary, but diverges in both the KV treatment and the stability mechanism.
 
 \paragraph{Cross-layer parameter sharing without recurrent semantics.}
-ALBERT~\citep{lan2020albert} shares parameters across stacked transformer layers as a compression strategy. The architecture is otherwise a standard non-recurrent encoder: there is no fixed-point semantics, no LTI gate, no prelude/coda separation, and no notion of ``iterating'' the shared block. \cart{} uses cross-layer weight sharing in the same mechanical sense (a single block is reused $R$ times) but interprets the reuse as recurrence with an explicit context anchor and a stability guarantee.
+ALBERT~\citep{lan2020albert} shares parameters across stacked transformer layers as a compression strategy. The architecture is otherwise a standard non-recurrent encoder: there is no fixed-point semantics, no LTI gate, no prelude/coda separation, and no notion of ``iterating'' the shared block. MobileLLM~\citep{liu2024mobilellm} extends this idea to sub-billion-parameter on-device language models, applying block-wise weight sharing in a stacked-decoder layout to improve quality per parameter at fixed parameter count---the same regime \cart{} targets, but again without recurrent semantics or a stability mechanism. \cart{} uses cross-layer weight sharing in the same mechanical sense as both works (a single block is reused $R$ times) but interprets the reuse as recurrence with an explicit context anchor and a stability guarantee.
 
 \paragraph{State-space models and linear-attention recurrence.}
 Mamba~\citep{gu2023mamba}, Mamba-2~\citep{dao2024mamba2}, and RWKV~\citep{peng2023rwkv} achieve infinite-context reasoning via recurrence over the \emph{sequence} dimension, with parallel-scan training algorithms that recover transformer-like throughput. \cart{}'s recurrence is over the \emph{depth} dimension: $R$ shared-weight passes over a fixed-length token sequence. The two are complementary rather than competing: SSMs trade attention's quadratic context cost for fixed-state memory, while \cart{} trades unique-layer parameter cost for sequential depth iteration. A natural future direction is combining the two (an SSM-based prelude feeding a \cart{}-style recurrent core), but this paper restricts attention to a transformer prelude with MLA self-attention.
@@ -313,28 +313,31 @@ CART $R=10$, $P=6$ delivers 15 Dense-layer-equivalent FLOPs from 125M stored par
 \subsection{Training Throughput and Hardware Utilization}
 \label{sec:throughput}
 
-Table~\ref{tab:throughput} reports measured Stage 2 training throughput on a single RTX 3090 (BF16 peak: 71 TFLOPS) across all $(d, R)$ combinations completed at time of writing. Throughput scales as expected with both model width and loop count: at $d{=}1024$ the throughput per token is roughly $1/3$ that at $d{=}256$, and each additional pair of loops costs $\sim 10$--$15\%$ of throughput at fixed $d$.
+Table~\ref{tab:throughput} reports measured Stage 2 training throughput on a single RTX 3090 (BF16 peak: 71 TFLOPS) across all $(d, R)$ combinations, averaged over three seeds per configuration. Throughput scales as expected with both model width and loop count: at $d{=}1024$ the throughput per token is roughly $1/4$ that at $d{=}256$, and each additional pair of loops costs $\sim 10$--$13\%$ of throughput at fixed $d$.
 
-Model FLOPs Utilization (MFU)~\citep{chowdhery2023palm} measures the fraction of theoretical peak compute used during training. \cart{}'s MFU rises monotonically with model width, from $\sim 17$--$20\%$ at $d{=}256$ to $\sim 33$--$36\%$ at $d{=}512$ and $\sim 54\%$ at $d{=}1024$. The improvement comes from larger matrix multiplications saturating Tensor Cores more effectively. For context, \citet{chowdhery2023palm} report MFU of $46.2\%$ for PaLM-540B on TPU v4, and \citet{brown2020gpt3} estimates around $21\%$ for GPT-3 175B on V100s; \citet{touvron2023llama} report $\sim 45\%$ for Llama-2 training on A100. \cart{}'s $54\%$ MFU at $d{=}1024$ on a single consumer RTX 3090 is therefore at the upper end of the reported range for transformer training, and demonstrates that the depth-recurrent loop structure does not impose a hardware-utilization penalty at the larger scales. Dense-baseline throughputs and MFU at matched parameter counts are \tbd{pending Stage 2 Dense runs}.
+Model FLOPs Utilization (MFU)~\citep{chowdhery2023palm} measures the fraction of theoretical peak compute used during training. \cart{}'s MFU rises monotonically with model width, from $\sim 20\%$ at $d{=}256$ to $\sim 33$--$37\%$ at $d{=}512$, $\sim 40$--$45\%$ at $d{=}768$, and $\sim 48$--$49\%$ at $d{=}1024$. The improvement comes from larger matrix multiplications saturating Tensor Cores more effectively. For context, \citet{chowdhery2023palm} report MFU of $46.2\%$ for PaLM-540B on TPU v4, \citet{brown2020gpt3} estimates around $21\%$ for GPT-3 175B on V100s, and \citet{touvron2023llama} report $\sim 45\%$ for Llama-2 training on A100. \cart{}'s $\sim 49\%$ MFU at $d{=}1024$ on a single consumer RTX 3090 is within the upper range reported for transformer training and demonstrates that the depth-recurrent loop structure does not impose a hardware-utilization penalty at the larger scales. Parameter-matched Dense-baseline throughputs were not run in this study and are left for follow-up work.
 
 \begin{table}[htbp]
 \centering
 \caption{Measured Stage 2 training throughput and Model FLOPs Utilization on a single RTX 3090. Effective batch is 32{,}768 tokens/step in all cases. MFU computed against BF16 peak of $71$ TFLOPS using the standard $6N$ FLOPs-per-token estimate where $N$ is the effective parameter count.}
 \label{tab:throughput}
 \footnotesize
-\begin{tabular}{cccrrr}
+\begin{tabular}{ccrrrr}
 \toprule
-$d$ & $R$ & $P$ & Tokens/sec & sec/step & MFU \\
+$d$ & $R$ & Eff.\ params (M) & Tokens/sec & sec/step & MFU \\
 \midrule
-256  & 6  & 6 & 134{,}409 & 0.244 & 17\% \\
-256  & 8  & 6 & 118{,}810 & 0.276 & 20\% \\
-256  & 10 & 6 & 108{,}144 & 0.303 & 20\% \\
-512  & 6  & 6 &  69{,}883 & 0.469 & 33\% \\
-512  & 8  & 6 &  62{,}225 & 0.527 & 35\% \\
-512  & 10 & 6 &  55{,}890 & 0.586 & 36\% \\
-1024 & 6  & 6 &  35{,}621 & 0.920 & 54\% \\
-1024 & 8  & 6 & \tbd{} & \tbd{} & \tbd{} \\
-1024 & 10 & 6 & \tbd{} & \tbd{} & \tbd{} \\
+256  & 6  &  18.0 & 134{,}985 & 0.243 & 20\% \\
+256  & 8  &  19.7 & 120{,}855 & 0.271 & 20\% \\
+256  & 10 &  21.4 & 110{,}408 & 0.297 & 20\% \\
+512  & 6  &  55.5 &  71{,}244 & 0.460 & 33\% \\
+512  & 8  &  66.0 &  63{,}441 & 0.517 & 35\% \\
+512  & 10 &  76.5 &  57{,}307 & 0.572 & 37\% \\
+768  & 6  & 104.8 &  45{,}556 & 0.719 & 40\% \\
+768  & 8  & 125.5 &  40{,}495 & 0.809 & 43\% \\
+768  & 10 & 146.3 &  36{,}325 & 0.902 & 45\% \\
+1024 & 6  & 178.8 &  32{,}393 & 1.012 & 49\% \\
+1024 & 8  & 200.3 &  28{,}711 & 1.141 & 49\% \\
+1024 & 10 & 221.8 &  25{,}681 & 1.276 & 48\% \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -366,27 +369,25 @@ $d$ & $R^*$ & $P^*$ & \pplwiki & \ppltiny & \ppledu & $\varrho$ \\
 
 In every case, $P=6$ is best. The $P$ ordering ($P=6 > P=4 > P=3 > P=2$) holds without exception across all $R$ values and all four scales.
 
-\subsection{R Benefit Increases with Scale}
+\subsection{R Benefit at Stage 1 vs.\ Stage 2}
 
-\tbd{The Stage 1 finding reported below ($R$-benefit grows from $-0.25\%$ at $d{=}256$ to $+5.24\%$ at $d{=}1024$) is partially contradicted by Stage 2 partial data: at the longer Stage 2 training budget, R is flat to slightly negative across $R \in \{6, 8, 10\}$ at $d \leq 768$. All Stage 2 conditions at $d \geq 768$ remain sub-Chinchilla on effective parameters (Table~\ref{tab:chinchilla}), so the Stage 2 observation does not yet rule out R-benefit at fuller training. The extended-training experiment (Section~\ref{sec:discussion}) is the decisive test. This subsection will be revised once that experiment completes.}
-
-Table~\ref{tab:r_benefit} shows the \pplwiki{} improvement from $R=2$ to $R=8$ within the $P=6$ slice. At $d=256$, higher $R$ slightly \emph{hurts} ($-0.25\%$, i.e., regresses). At $d=1024$, the same gain is $+5.24\%$. The benefit of depth recurrence increases monotonically with model width.
+At the Stage 1 training budget of 3{,}000 steps ($\sim 100$M tokens), the benefit of additional recurrence depth appeared to grow monotonically with model width: from a slight regression of $-0.25\%$ at $d{=}256$ to a $+5.24\%$ improvement at $d{=}1024$ on \pplwiki{} (Table~\ref{tab:r_benefit_s1}). Figure~\ref{fig:ppl_vs_r} visualizes this trend across $R \in \{2, 4, 6, 8\}$. The Stage 1 conclusion was that recurrence depth and representational width are complementary: larger models extract more from each additional loop because their prelude output is richer.
 
 \begin{figure}[htbp]
   \centering
   \includegraphics[width=\linewidth]{../figures/ppl_vs_r.png}
-  \caption{Stage 1 \pplwiki{} as a function of loop count $R$, with one panel per scale and one curve per prelude depth $P$. The $P{=}6$ curves dominate at every scale, and the slope of the $P{=}6$ curve flattens or inverts at $d{=}256$ (small models gain nothing from more loops) but steepens monotonically with $d_\text{model}$, reaching a $\sim 5\%$ reduction from $R{=}2$ to $R{=}8$ at $d{=}1024$. Recurrence depth and representational width are complementary, not substitutable.}
+  \caption{Stage 1 \pplwiki{} as a function of loop count $R$, with one panel per scale and one curve per prelude depth $P$ (step 3{,}000). The Stage 1 picture suggests $R$-benefit grows monotonically with $d$. Stage 2 results at the longer training budget reverse this trend; see Table~\ref{tab:r_benefit_s2}.}
   \label{fig:ppl_vs_r}
 \end{figure}
 
 \begin{table}[htbp]
 \centering
-\caption{$R$ benefit at $P=6$: \pplwiki{} improvement from $R=2$ to $R=8$.}
-\label{tab:r_benefit}
+\caption{Stage 1 (step 3{,}000) $R$-benefit at $P{=}6$: \pplwiki{} improvement from $R{=}2$ to $R{=}8$.}
+\label{tab:r_benefit_s1}
 \footnotesize
 \begin{tabular}{cccccr}
 \toprule
-$d$ & $R=2$ & $R=4$ & $R=6$ & $R=8$ & Gain \\
+$d$ & $R{=}2$ & $R{=}4$ & $R{=}6$ & $R{=}8$ & Gain \\
 \midrule
 256  & 185.7 & 185.3 & 184.9 & 186.2 & $-0.25\%$ \\
 512  & 138.8 & 137.9 & 137.4 & 136.4 & $+1.72\%$ \\
@@ -395,6 +396,27 @@ $d$ & $R=2$ & $R=4$ & $R=6$ & $R=8$ & Gain \\
 \bottomrule
 \end{tabular}
 \end{table}
+
+At the Stage 2 training budget of 30{,}500 steps ($\sim 1$B tokens, $\sim 10\times$ Stage 1), the trend reverses. Table~\ref{tab:r_benefit_s2} reports 3-seed mean \pplwiki{} across $R \in \{6, 8, 10\}$ at every scale. $R$-benefit is positive only at $d{=}256$, where $R{=}8$ improves on $R{=}6$ by $2.1\%$. At every $d \geq 512$, $R{=}6$ is the best of the three on all three perplexity metrics; going from $R{=}6$ to $R{=}10$ at $d{=}1024$ yields a $0.7\%$ \emph{regression}. The pattern is consistent across \ppltiny, \pplwiki, and \ppledu.
+
+\begin{table}[htbp]
+\centering
+\caption{Stage 2 (step 30{,}500) $R$-benefit at $P{=}6$: 3-seed mean \pplwiki{} across $R \in \{6, 8, 10\}$. Best $R$ per scale is bolded. Gain reports $R{=}6 \to R{=}10$.}
+\label{tab:r_benefit_s2}
+\footnotesize
+\begin{tabular}{ccccr}
+\toprule
+$d$ & $R{=}6$ & $R{=}8$ & $R{=}10$ & Gain $R{=}6 \to R{=}10$ \\
+\midrule
+256  & 41.165 & \textbf{40.311} & 40.714 & $+1.10\%$ \\
+512  & \textbf{27.097} & 27.203 & 27.378 & $-1.04\%$ \\
+768  & \textbf{22.850} & 22.863 & 22.961 & $-0.48\%$ \\
+1024 & \textbf{20.354} & 20.402 & 20.495 & $-0.69\%$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The Stage 1 prediction that $R$-benefit grows with $d$ is therefore not supported by Stage 2 measurements at this training budget; the direction is reversed. Three explanations are consistent with the data: (i) at full training, the prelude has absorbed enough signal that additional loops over a frozen anchor provide little new information, regardless of $d$; (ii) the LTI gate settles in an aggressive-discard regime (Section~\ref{sec:spectral}: $\varrho^{10} \approx 0.16$ at $d{=}1024$, $R{=}10$), so additional iterations contribute proportionally less; (iii) the training corpus---next-token prediction on natural prose with no code, math, or formal reasoning---may not contain enough examples that reward iterative refinement, so the recurrent core has no incentive to develop the per-iteration utility that would benefit higher $R$ at scale. Distinguishing (i)/(ii) from (iii) requires either training to fuller convergence (the extended-training experiment in Section~\ref{sec:discussion}) or training on a more iteration-reward-bearing corpus, both left for follow-up work.
 
 \subsection{Scale Dominates Hyperparameters}
 
@@ -415,43 +437,42 @@ Figure~\ref{fig:loss256} shows training curves for $d=256$. All curves are still
 \section{Spectral Radius Analysis}
 \label{sec:spectral}
 
-\tbd{This entire section reports Stage 1 (3{,}000-step) data. Stage 2 final $\varrho$ values are substantially lower (settling in $[0.79, 0.82]$ rather than $\approx 0.893$) and depend on both $d$ and $R$, contradicting the Stage 1 ``insensitive to loop count'' claim. Section pending full rewrite once Stage 2 is complete (~2026-05-17).}
-
-
-\begin{figure}[htbp]
-  \centering
-  \includegraphics[width=\columnwidth]{../figures/spectral_radius_256.png}
-  \caption{Spectral radius $\varrho$ across all Stage 1 $d=256$ configs. The LTI gate converges to a narrow band $\varrho \approx 0.893$ regardless of $R$ or $P$.}
-  \label{fig:rho256}
-\end{figure}
-
-One of the most striking Stage 1 findings is the convergence of the LTI gate's spectral radius to $\varrho \approx 0.893$ across all 64 configurations (Figure~\ref{fig:rho256}). Table~\ref{tab:rho} summarizes the scale trend.
+After full Stage 2 training (30{,}500 steps, $\sim$1B tokens), the LTI gate's spectral radius $\varrho$ settles in a narrow band $[0.79, 0.83]$, depending on both $d$ and $R$. Table~\ref{tab:rho} reports 3-seed mean $\varrho$ at step 30{,}500 across all 12 $(d, R)$ configurations.
 
 \begin{table}[htbp]
 \centering
-\caption{Spectral radius $\varrho$ summary across all 64 Stage 1 configs.}
+\caption{Final spectral radius $\varrho$ (3-seed mean at step 30{,}500) across all 36 Stage 2 configurations, $P{=}6$.}
 \label{tab:rho}
 \footnotesize
 \begin{tabular}{ccccc}
 \toprule
-$d$ & Mean $\varrho$ & Min & Max & $\Delta$ from $d{=}256$ \\
+$d$ & $R{=}6$ & $R{=}8$ & $R{=}10$ & $\Delta$ from $d{=}256$ (R=6) \\
 \midrule
-256  & 0.8922 & 0.8908 & 0.8929 & ---     \\
-512  & 0.8925 & 0.8912 & 0.8950 & +0.0003 \\
-768  & 0.8945 & 0.8926 & 0.8959 & +0.0023 \\
-1024 & 0.8964 & 0.8945 & 0.8987 & +0.0042 \\
+256  & 0.790 & 0.795 & 0.799 & --- \\
+512  & 0.800 & 0.804 & 0.807 & $+0.010$ \\
+768  & 0.814 & 0.816 & 0.820 & $+0.024$ \\
+1024 & 0.823 & 0.826 & 0.830 & $+0.033$ \\
 \bottomrule
 \end{tabular}
 \end{table}
 
-\paragraph{Universal memory timescale.}
-For a loop count $R$, the ``ideal'' spectral radius where half the initial residual survives all $R$ iterations is $\varrho_\text{ideal} = 0.5^{1/R}$. For $R=6$, $\varrho_\text{ideal} = 0.8909$, essentially the value all scales learn. The model settles on the $R=6$ ideal regardless of its actual $R$, using a universal convergence rate rather than adapting to the specific loop count.
+\paragraph{Reconciling with Stage 1.} The Stage 1 paper draft reported $\varrho \approx 0.893$ as a ``universal'' value across all configurations, measured at step 3{,}000. Figure~\ref{fig:rho256} illustrates the Stage 1 trajectories at $d{=}256$, which do cluster near $0.893$ at the 3{,}000-step mark. Stage 2 reveals that this was a transient: $\varrho$ continues to decay through full training and only settles much later. For $d{=}1024$, $R{=}6$, seed 42, the trajectory runs $\varrho \approx 0.899$ at step 500, $0.886$ at step 5{,}000, $0.860$ at step 15{,}000, $0.834$ at step 25{,}000, and $0.828$ at step 30{,}500. The Stage 1 ``$0.5^{1/R}$ coincidence'' at $R{=}6$ ($\varrho \approx 0.8909$) does not survive to full training; final values are $\sim 0.05$ to $0.10$ below that line.
 
-\paragraph{Scale-dependent drift.}
-Mean $\varrho$ increases slowly with $d_\text{model}$: $+0.0042$ from $d=256$ to $d=1024$. Larger models prefer \emph{slower} convergence: their fixed points are richer and require more gradual refinement. This is not designed; it emerges from training. We interpret it as the LTI mechanism adapting its memory timescale to the complexity of the prelude representations: at $d=1024$, the context anchor $e$ encodes more, and the core needs more loop steps of gentle refinement to fully integrate it.
+\begin{figure}[htbp]
+  \centering
+  \includegraphics[width=\columnwidth]{../figures/spectral_radius_256.png}
+  \caption{Stage 1 (3{,}000 step) spectral radius $\varrho$ trajectories for all $d{=}256$ configurations. The Stage 1 clustering near $\varrho \approx 0.893$ visible here is a mid-training transient; Stage 2 final values settle 0.09 to 0.10 lower (Table~\ref{tab:rho}).}
+  \label{fig:rho256}
+\end{figure}
+
+\paragraph{Scale-dependent retention.}
+Mean $\varrho$ rises monotonically with $d$ at every fixed $R$, gaining $+0.033$ from $d{=}256$ to $d{=}1024$ at $R{=}6$. Larger models prefer slower per-iteration decay: a richer context anchor $e$ encodes more, and a higher $\varrho$ retains more of the previous hidden state across each gate application. The directional trend matches the Stage 1 observation, but the magnitude is substantially larger ($+0.033$ at full training vs.\ $+0.0042$ at 3{,}000 steps) and is no longer dominated by measurement noise.
+
+\paragraph{Weak R-dependence (new).}
+At every $d$, $\varrho$ also rises with $R$: $+0.008$ to $+0.009$ from $R{=}6$ to $R{=}10$. Stage 1 missed this because $R$-dependence is small compared to the mid-training transient. The interpretation is that when more iterations are available, the gate retains slightly more per-iteration state, but only slightly---about $1\%$ relative change per pair of additional loops. The model treats ``more loops'' as a mild reason to retain more, not a strong reason.
 
 \paragraph{Residual persistence.}
-With $\varrho \approx 0.893$ and $R=8$, $\varrho^8 \approx 0.41$, meaning 41\% of the initial residual persists after all loops. This is the primary reason larger models extract more benefit from higher $R$: their prelude output is richer enough that the residual carries useful signal even after 8 refinement steps.
+The fraction of the initial residual that survives all $R$ iterations is $\varrho^R$. At $d{=}1024$, $R{=}6$: $\varrho^6 = 0.823^6 \approx 0.311$. At $d{=}1024$, $R{=}10$: $\varrho^{10} = 0.830^{10} \approx 0.155$. The gate is in an aggressive-discard regime in both cases, throwing away $69$--$85\%$ of the prelude-driven residual through the loop. This is consistent with the absence of R-benefit reported in Section~\ref{sec:stage2}: a gate that discards most of each iteration's output cannot strongly differentiate ``run for 6 iterations'' from ``run for 10 iterations.'' The mechanism the LTI gate has learned at this training budget is closer to ``use the prelude representation, refine modestly, then commit'' than to ``integrate over many refinement steps.''
 
 % ============================================================
 \section{Stage 2 Results}
@@ -502,8 +523,8 @@ At $d=256$, \cart{} trails the (invalidated) Dense reference on \ppltiny. At $d=
 \end{itemize}
 \textit{Note: Dense $d=512$ figure is from an earlier run at different settings and is shown for reference only. Stage 2 Dense reruns will provide the final numbers.}
 
-\paragraph{R insensitivity at $d=512$.}
-$R=6$ and $R=8$ produce statistically indistinguishable perplexity at $d=512$ (difference $< 0.01$ on \ppltiny). This mirrors the Stage 1 pattern: the $R$ benefit at $d=512$ was small in Stage 1 ($+1.72\%$ wiki) and appears small at Stage 2 as well. Based on Stage 1 trends, $R$ benefit should increase substantially at $d=768$ and $d=1024$.
+\paragraph{R insensitivity at $d{=}512$ and above.}
+At $d{=}512$, $R{=}6$ and $R{=}8$ produce statistically indistinguishable perplexity (difference $< 0.01$ on \ppltiny). This R-flatness pattern persists at $d{=}768$ and $d{=}1024$: in both cases $R{=}6$ is the best of $\{6, 8, 10\}$ on all three perplexity metrics, with the gap to $R{=}10$ within $1\%$ at $d{=}768$ and within $0.7\%$ at $d{=}1024$. The Stage 1 prediction that $R$-benefit would grow substantially at $d{=}768$ and $d{=}1024$ is reversed at the Stage 2 training budget. See Section~\ref{sec:stage1} (Table~\ref{tab:r_benefit_s2}) for the full Stage 1 vs.\ Stage 2 comparison.
 
 \paragraph{Cross-tokenizer reference (bits per byte).}
 For comparison with models trained under different tokenizers, we report bits per byte (BPB) computed as $\text{BPB} = \log_2(\text{ppl}) \cdot t/b$, where $t/b$ is the average tokens-per-byte ratio of the Llama-2 tokenizer on the relevant evaluation domain ($\approx 0.27$ for English natural-language text). At $d{=}512$, mean across $R \in \{6, 8, 10\}$ and 3 seeds: $\text{BPB}_\text{wiki} = 1.286$, $\text{BPB}_\text{edu} = 1.292$. At $d{=}256$, mean: $\text{BPB}_\text{wiki} = 1.444$, $\text{BPB}_\text{edu} = 1.448$.
@@ -522,11 +543,11 @@ Stage 1 perplexity at the best $(R, P)$ configuration per scale fits a power law
 \]
 fit on four data points $(d, R{=}8, P{=}6)$ at step 3{,}000 ($r^2 \approx 0.999$). Each doubling of $d$ reduces \pplwiki{} by approximately $28\%$. The exponent of $-0.458$ sits at the steeper end of the range reported for standard transformer scaling laws~\citep{kaplan2020scaling,hoffmann2022chinchilla}, which typically fit exponents on $d$ alone in the range $-0.3$ to $-0.4$ at sub-Chinchilla token budgets.
 
-At the full Stage 2 training budget of $\sim 1$B tokens, the cross-scale picture is now available at all four scales as 3-seed $R{=}6$ means. Reporting $R{=}6$ rather than R-averaged means keeps the cross-scale comparison clean, since $R{=}6$ was the best $R$ at every scale tested so far.
+At the full Stage 2 training budget of $\sim 1$B tokens, the cross-scale picture is available at all four scales as 3-seed $R{=}6$ means. We report $R{=}6$ across all scales for a clean cross-scale comparison: $R{=}6$ is the best $R$ at every scale $d \geq 512$ on all three metrics, and at $d{=}256$ is within $2.1\%$ of the $R{=}8$ best on the natural-language sets while tying on \ppltiny.
 
-The Stage 2 single-step exponents on \pplwiki{} soften progressively with scale: $-0.60$ from $d{=}256 \to d{=}512$, $-0.42$ from $d{=}512 \to d{=}768$, and $-0.40$ from $d{=}768 \to d{=}1024$. A 4-point power-law fit on the R=6 means yields $\text{PPL}_\text{wiki}^\text{stage2}(d) \approx 671 \cdot d^{-0.51}$, steeper than the Stage 1 fit of $-0.46$ but with visible softening at the larger end. 3-seed agreement at d=1024 R=6 is tight (std on ppl\_wiki across seeds: $0.07$, on ppl\_tiny: $0.010$). \tbd{The R=8 and R=10 sweeps at d=1024 will update the cross-R picture and may shift the per-scale best $R$ at d=1024; final scaling fit pending Stage 2 completion (est.\ 2026-05-16).}
+The Stage 2 single-step exponents on \pplwiki{} soften progressively with scale: $-0.60$ from $d{=}256 \to d{=}512$, $-0.42$ from $d{=}512 \to d{=}768$, and $-0.40$ from $d{=}768 \to d{=}1024$. A 4-point power-law fit on the $R{=}6$ means yields $\text{PPL}_\text{wiki}^\text{stage2}(d) \approx 683 \cdot d^{-0.51}$, steeper than the Stage 1 fit of $-0.46$ but with visible softening at the larger end. 3-seed agreement at $d{=}1024$, $R{=}6$ is tight (standard deviation on \pplwiki across seeds: $0.07$; on \ppltiny: $0.010$).
 
-Two interpretations of the softening are consistent with the current data: (a) the cross-scale fit is approximately $-0.50$ with some variance at each transition, and the softening is sample noise; or (b) per-$d$ efficiency genuinely diminishes above $d{=}512$, signaling early saturation of the prelude representation under the Stage 2 token budget. Interpretation (b) is becoming the more parsimonious read as each successive scale step delivers a shallower exponent, but distinguishing the two requires either the d=1024 3-seed mean or the extended-training experiment (Section~\ref{sec:discussion}). \tbd{Final interpretation pending d=1024 full sweep and the extended-training run.}
+Two interpretations of the softening remain consistent with the data: (a) the cross-scale fit is approximately $-0.50$ with some variance at each transition, and the per-segment softening is sample noise; or (b) per-$d$ efficiency genuinely diminishes above $d{=}512$, signaling early saturation of the prelude representation under the $\sim 1$B-token training budget. Interpretation (b) is the more parsimonious read of three successively shallower exponents, but distinguishing the two would require either a wider-than-three-seed sample at each scale or the extended-training experiment (Section~\ref{sec:discussion}) to push $d{=}1024$ closer to effective-Chinchilla and observe whether its exponent stiffens.
 
 \begin{table}[htbp]
 \centering
@@ -545,30 +566,36 @@ $d$ & Stage 1 \pplwiki & Stage 2 \pplwiki & Implied exp.\ vs.\ prior $d$ \\
 \end{tabular}
 \end{table}
 
-Comparison against parameter-matched Dense baselines across all four scales is \tbd{pending Stage 2 Dense runs} and will resolve three open questions: (i) whether \cart{}'s scaling exponent in $d$ is steeper or shallower than Dense's at parameter parity; (ii) whether \cart{}'s natural-language advantage at $d{=}512$ ($\sim 9$--$16\%$, Section~\ref{sec:stage2}) grows or shrinks with $d$; and (iii) per-parameter and per-FLOP knowledge density relative to Dense. The first two are the central questions for the parameter-efficiency claim.
+Parameter-matched Dense baselines across all four scales were not run in this study. Three questions therefore remain open and are left for follow-up work: (i) whether \cart{}'s scaling exponent in $d$ is steeper or shallower than Dense's at parameter parity; (ii) whether \cart{}'s natural-language advantage at $d{=}512$ ($\sim 9$--$16\%$, Section~\ref{sec:stage2}) grows or shrinks with $d$; and (iii) per-parameter and per-FLOP knowledge density relative to Dense. The first two are the central questions for the parameter-efficiency claim and the cleanest direction for a follow-up paper.
 
 \subsection{Inference-Time Depth Scaling}
 \label{sec:inference_R}
 
 \cart{}'s frozen-KV design admits a property not available to architectures that recompute $K, V$ each iteration: $R$ at inference time can differ from $R$ at training time without retraining. The frozen $K, V$ tensors do not depend on $R$; the core block's weights are shared; the LIE table extends to $R{=}16$ in our implementation; and the LTI gate's $\varrho < 1$ guarantee ensures convergence as $R \to \infty$.
 
-We evaluate this property on the best $d{=}1024$ Stage 2 model (trained at $R{=}10$) by running both perplexity and downstream benchmark evaluations at $R \in \{6, 8, 10, 12, 14, 16\}$, with no fine-tuning between settings. Results are reported in Table~\ref{tab:variable_r} and are \tbd{pending completion of $d{=}1024$ Stage 2 runs, est.\ 2026-05-16}. The evaluation answers three questions: (i) the marginal perplexity and benchmark-accuracy gain from each additional inference-time loop; (ii) the saturation point at which additional loops cease to help; and (iii) whether accuracy improves monotonically with inference compute, which would constitute direct evidence the recurrent core is doing useful computational work rather than just curve-fitting. If accuracy improves monotonically up to some $R^* > 10$, this provides a deterministic-latency analogue to the variable-compute scaling reported by~\citet{geiping2025latent}.
+We evaluate this property on the best $d{=}1024$ Stage 2 model. Since $R{=}6$ produced the lowest perplexity at $d{=}1024$ across all three metrics (Section~\ref{sec:scaling}), the model selected for this experiment was trained at $R{=}6$, and we run inference at $R \in \{2, 4, 6, 8, 10, 12, 14, 16\}$ with no fine-tuning between settings. The four benchmark tasks (HellaSwag, ARC-Challenge, LAMBADA, PIQA) are run end-to-end at every $R$. The sweep covers both directions around the trained $R$: $R < 6$ tests inference-time compute \emph{reduction} (fewer iterations than trained), $R > 6$ tests inference-time compute \emph{scaling} (more iterations than trained, the deterministic-latency analogue to the variable-compute scaling reported by~\citet{geiping2025latent}).
+
+Table~\ref{tab:variable_r} reports the results. The picture is bilateral: $R{=}6$, the training $R$, is the best inference setting on the three metrics that carry signal (HellaSwag, LAMBADA, PIQA), and performance degrades on both sides. Below the trained $R$, the degradation is sharp: LAMBADA perplexity rises from $163.7$ at $R{=}6$ to $328.8$ at $R{=}4$ ($2\times$ worse) and $2632.6$ at $R{=}2$ ($16\times$ worse). Above the trained $R$, the degradation is gentler but monotonic: LAMBADA reaches $269.4$ at $R{=}16$ ($65\%$ worse than $R{=}6$); HellaSwag drops by $\sim 0.6$ points, PIQA by $\sim 1.9$ points. ARC-Challenge varies by less than $5$ points across all eight inference $R$ values but does not provide a clear signal: at every $R \in \{4, 6, 8, 10, 12, 14, 16\}$, accuracy lies below the $25\%$ random baseline for a 4-choice task, indicating the model is confidently wrong rather than uncertain, and the apparent $R{=}2$ peak at $25.43\%$ reflects the model essentially answering randomly rather than learning anything useful from two iterations.
+
+The shape of the degradation profile is direct evidence that the recurrent core has converged to a specific fixed-point structure tied to its trained $R$: too few iterations leave the representation under-developed (especially visible on LAMBADA's long-range coreference), while too many iterations push the state past its trained convergence point. This is a clean negative result for test-time compute scaling in \cart{} under the present training recipe; the cheapest path to test-time compute scaling for \cart{} appears to be training-time variable-$R$ (as in~\citet{prairie2026parcae}) rather than post-hoc extrapolation. The negative finding is consistent with the absent R-benefit observed during training (Section~\ref{sec:stage1}): the model does not extract per-iteration improvement on this corpus regime, regardless of when those iterations happen.
 
 \begin{table}[htbp]
 \centering
-\caption{Variable-$R$ inference on the best $d{=}1024$ Stage 2 model trained at $R{=}10$. Results are \tbd{pending Stage 2 completion}.}
+\caption{Variable-$R$ inference on the best $d{=}1024$ Stage 2 model, trained at $R{=}6$. HellaSwag, ARC-C, and PIQA report normalized accuracy; LAMBADA reports accuracy with perplexity in parentheses. Best value per column among the rows that carry signal (HellaSwag, LAMBADA, PIQA) is bolded. ARC-C values below the 4-choice $25\%$ random baseline indicate the model is confidently wrong rather than uncertain; the apparent $R{=}2$ ``best'' is essentially random.}
 \label{tab:variable_r}
 \footnotesize
-\begin{tabular}{ccccc}
+\begin{tabular}{rcccc}
 \toprule
-Inference $R$ & \pplwiki & HellaSwag & ARC-C & LAMBADA acc \\
+Inference $R$ & HellaSwag & ARC-C & LAMBADA acc (ppl) & PIQA \\
 \midrule
- 6 & \tbd{} & \tbd{} & \tbd{} & \tbd{} \\
- 8 & \tbd{} & \tbd{} & \tbd{} & \tbd{} \\
-10 & \tbd{} & \tbd{} & \tbd{} & \tbd{} \\
-12 & \tbd{} & \tbd{} & \tbd{} & \tbd{} \\
-14 & \tbd{} & \tbd{} & \tbd{} & \tbd{} \\
-16 & \tbd{} & \tbd{} & \tbd{} & \tbd{} \\
+ 2         & 27.91 & 25.43 &  7.74 (2632.6) & 55.01 \\
+ 4         & 27.71 & 23.38 & 18.01 ( 328.8) & 56.64 \\
+ 6 (train) & \textbf{28.04} & 21.84 & \textbf{23.04} (\textbf{163.7}) & \textbf{58.11} \\
+ 8         & 27.90 & 21.33 & 22.12 ( 173.0) & 57.83 \\
+10         & 27.97 & 21.59 & 21.41 ( 190.6) & 57.40 \\
+12         & 27.61 & 21.93 & 20.65 ( 214.2) & 56.58 \\
+14         & 27.47 & 21.84 & 19.46 ( 246.0) & 56.47 \\
+16         & 27.42 & 21.93 & 18.55 ( 269.4) & 56.20 \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -580,39 +607,41 @@ Perplexity establishes that \cart{} produces a calibrated language model, but do
 
 \begin{table}[htbp]
 \centering
-\caption{Zero-shot downstream benchmarks for \cart{} at best $R$ per scale (one seed). HellaSwag and ARC-Challenge report normalized accuracy ($\mathrm{acc\_norm}$); LAMBADA reports accuracy with perplexity in parentheses; PIQA reports raw accuracy. Best $R$ is selected by lowest mean \pplwiki{}. Dense baseline at parameter parity is \tbd{pending Dense Stage 2 runs}. d=768 and d=1024 benchmark rows are \tbd{pending Stage 2 completion}.}
+\caption{Zero-shot downstream benchmarks for \cart{} at best $R$ per scale (one seed). HellaSwag and ARC-Challenge report normalized accuracy ($\mathrm{acc\_norm}$); LAMBADA reports accuracy with perplexity in parentheses; PIQA reports raw accuracy. Best $R$ at each scale is selected by lowest mean \pplwiki{}. Parameter-matched Dense baselines were not run in this study.}
 \label{tab:benchmarks}
 \footnotesize
 \begin{tabular}{rcccccc}
 \toprule
 $d$ & Best $R$ & HellaSwag & ARC-C & LAMBADA acc (ppl) & PIQA & Dense match? \\
 \midrule
- 256 &  8 & 26.49 & 21.59 & 8.66 (2079) & 54.79 & \tbd{} \\
- 512 &  6 & 27.10 & 22.87 & 16.15 (507) & 55.60 & \tbd{} \\
- 768 &  6 & 27.05 & 22.87 & 20.42 (251) & 57.67 & \tbd{} \\
-1024 & \tbd{} & \tbd{} & \tbd{} & \tbd{} & \tbd{} & \tbd{} \\
+ 256 &  8 & 26.49 & 21.59 & 8.66 (2079) & 54.79 & --- \\
+ 512 &  6 & 27.10 & 22.87 & 16.15 (507) & 55.60 & --- \\
+ 768 &  6 & 27.05 & 22.87 & 20.42 (251) & 57.67 & --- \\
+1024 &  6 & 28.04 & 21.84 & 23.02 (164) & 58.11 & --- \\
 \bottomrule
 \end{tabular}
 \end{table}
 
-These four benchmarks cover commonsense reasoning (HellaSwag), scientific factual recall (ARC-C), long-range linguistic coherence (LAMBADA), and physical-world plausibility (PIQA). The cross-scale data already complete reveals a divided pattern at sub-1B parameter counts. LAMBADA and PIQA scale smoothly with $d$: LAMBADA accuracy rises from $8.66\%$ at $d{=}256$ through $16.15\%$ at $d{=}512$ to $20.42\%$ at $d{=}768$, and its perplexity halves at each step ($2079 \to 507 \to 251$); PIQA accuracy rises monotonically from $54.79\%$ to $57.67\%$. HellaSwag and ARC-C, by contrast, show a flat plateau between $d{=}512$ and $d{=}768$ ($27.10\%$ vs.\ $27.05\%$ on HellaSwag; $22.87\%$ vs.\ $22.87\%$ on ARC-C). These benchmarks test capabilities that are widely reported to emerge at scale rather than improving smoothly, and our results are consistent with the model remaining below the capability threshold at $d{=}768$.
+These four benchmarks cover commonsense reasoning (HellaSwag), scientific factual recall (ARC-C), long-range linguistic coherence (LAMBADA), and physical-world plausibility (PIQA). The cross-scale data reveal a divided pattern at sub-1B parameter counts. LAMBADA and PIQA scale smoothly across all four widths: LAMBADA accuracy rises monotonically from $8.66\%$ at $d{=}256$ through $16.15\%$, $20.42\%$, to $23.02\%$ at $d{=}1024$, with perplexity halving at every step ($2079 \to 507 \to 251 \to 164$); PIQA accuracy rises monotonically from $54.79\%$ to $58.11\%$. HellaSwag and ARC-C, by contrast, show a near-plateau across $d{=}512$, $768$, and $1024$ ($27.10$, $27.05$, $28.04$ on HellaSwag; $22.87$, $22.87$, $21.84$ on ARC-C, with the $d{=}1024$ ARC-C value within seed noise of random at $25\%$ on the 4-choice task). These benchmarks test capabilities that are widely reported to emerge at scale rather than improving smoothly, and our results are consistent with the model remaining below the capability threshold for those tasks at the parameter and training-token budgets we tested.
 
-For reference, GPT-2 small (124M parameters, $\sim 8$B training tokens) reports approximately $29\%$ HellaSwag, $22\%$ ARC-C, $46\%$ LAMBADA accuracy, and $62\%$ PIQA. CART at $d{=}768$ already matches GPT-2 small on ARC-C with $\sim 105$M effective parameters and one-eighth the training data. LAMBADA accuracy remains substantially below GPT-2 small's, which we attribute primarily to the training-token gap. Given the d=512 to d=768 plateau on HellaSwag/ARC-C, the $d{=}1024$ results may or may not cross the threshold for those tasks at $\sim 1$B training tokens; the extended-training experiment (Section~\ref{sec:discussion}) is the cleaner test for whether additional capability emerges with more training on the same architecture. The central paper comparison remains CART-vs-Dense at parameter parity rather than CART-vs-published-models.
+For reference, GPT-2 small (124M parameters, $\sim 8$B training tokens) reports approximately $29\%$ HellaSwag, $22\%$ ARC-C, $46\%$ LAMBADA accuracy, and $62\%$ PIQA. CART at $d{=}1024$ ($\sim 179$M effective parameters, $1$B training tokens) reaches $28.04\%$ HellaSwag (within $1$ point of GPT-2 small) and $21.84\%$ ARC-C (matching within noise), at one-eighth the training data. LAMBADA accuracy remains substantially below GPT-2 small's, which we attribute primarily to the training-token gap; the extended-training experiment (Section~\ref{sec:discussion}) is the cleaner test for whether additional training on the same architecture closes that gap.
 
 \paragraph{Few-shot evaluation at $d{=}1024$.}
 In addition to zero-shot scores, we report 5-shot accuracy on the best $d{=}1024$ model on the same four tasks (Table~\ref{tab:fewshot}). 5-shot evaluation tests whether the model can use in-context examples to improve task accuracy---an emergent capability that is typically undetectable at sub-100M parameter counts but begins to appear at $\sim 200$M effective parameters. We omit few-shot evaluation at $d \in \{256, 512, 768\}$ because zero-shot accuracy at those scales is already near random, leaving no measurable headroom for in-context examples to help.
 
+The results are mixed and informative. On ARC-Challenge, 5-shot improves over 0-shot by $1.2$ points ($21.84 \to 23.04$, both still below the $25\%$ 4-choice random baseline); on HellaSwag, by $0.3$ points ($28.04 \to 28.36$). These small but positive deltas indicate the model does extract some useful signal from in-context demonstrations on multiple-choice tasks. On LAMBADA, by contrast, 5-shot accuracy drops sharply ($23.02 \to 15.25$, a $-7.8$ point regression) and perplexity more than doubles ($163.7 \to 366.3$). PIQA also regresses modestly ($-2.0$ points). The LAMBADA regression is consistent with format mismatch: the task expects a single contiguous passage with a missing final word, but the 5-shot evaluation prepends five demonstration passages that shift the input out of the model's trained sequence-length and structural distribution. PIQA's small regression has a similar explanation---the model's representation of physical-commonsense questions does not readily generalize to a five-times-prepended input. We interpret the asymmetry as evidence that emergent few-shot capability is only partially present at this parameter and training-token budget: the model can leverage demonstrations when the format is amenable but cannot yet robustly use them under format shifts.
+
 \begin{table}[htbp]
 \centering
-\caption{Zero-shot vs.\ 5-shot accuracy at $d{=}1024$, best $R$, one seed. Results are \tbd{pending Stage 2 completion}.}
+\caption{Zero-shot vs.\ 5-shot accuracy at $d{=}1024$, $R{=}6$, seed 271 (the best $d{=}1024$ Stage 2 model). HellaSwag, ARC-C, and PIQA report normalized accuracy. LAMBADA reports accuracy with perplexity in parentheses.}
 \label{tab:fewshot}
 \footnotesize
 \begin{tabular}{lcccc}
 \toprule
-Shots & HellaSwag & ARC-C & LAMBADA & PIQA \\
+Shots & HellaSwag & ARC-C & LAMBADA acc (ppl) & PIQA \\
 \midrule
-0-shot & \tbd{} & \tbd{} & \tbd{} & \tbd{} \\
-5-shot & \tbd{} & \tbd{} & \tbd{} & \tbd{} \\
+0-shot & 28.04 & 21.84 & 23.02 (163.7) & 58.11 \\
+5-shot & 28.36 & 23.04 & 15.25 (366.3) & 56.09 \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -642,7 +671,7 @@ The emergent result, $\varrho \approx 0.893$ across all four scales (close to th
 The $R$-benefit in \cart{} is strongly scale-dependent. Stage 1 \pplwiki{} improvement from $R{=}2$ to $R{=}8$ at $P{=}6$ ranges from $-0.25\%$ at $d{=}256$ (slight regression, $\phi$ effectively zero in this range) to $+5.24\%$ at $d{=}1024$ (Section~\ref{sec:stage1}). Stage 2 sharpens this picture: at full training budget, $R{=}6 \to R{=}8 \to R{=}10$ at $d{=}512$ gives $27.10 \to 27.20 \to 27.38$ \pplwiki{}, marginally regressing rather than improving. At $d{=}256$ the same range is $40.7 \to 40.3 \to 40.7$, also flat. The useful $R$ range at small scales appears to saturate at $R{=}6$ under our token budget; additional loops are not worth a unique layer's $\phi$.
 
 \paragraph{The \texorpdfstring{$\phi(d)$}{phi(d)} hypothesis.}
-The pattern across scales suggests a refinement of Schwethelm's framework: $\phi$ for \cart{} is not a single number but a function $\phi(d)$ of model width. The Stage 1 monotonic growth of $R$-benefit with $d$ (Table~\ref{tab:r_benefit}) and the Stage 2 saturation at small $d$ both point to $\phi(d)$ being approximately zero at $d{=}256$, growing through $d \in \{512, 768\}$, and reaching its maximum at $d{=}1024$ within our sweep range. We hypothesize that $\phi$ for any depth-recurrent architecture with a fixed context anchor depends on the representational capacity of the prelude: a small prelude produces a representation that the core can fully exploit in a few iterations, after which additional loops do nothing; a large prelude produces a richer representation that rewards more refinement steps before saturating. If correct, this is a refinement Schwethelm's single-$\phi$ framework does not capture.
+The pattern across scales suggests a refinement of Schwethelm's framework: $\phi$ for \cart{} is not a single number but a function $\phi(d)$ of model width. The Stage 1 monotonic growth of $R$-benefit with $d$ (Table~\ref{tab:r_benefit_s1}) is reversed at Stage 2 (Table~\ref{tab:r_benefit_s2}), where $R$-benefit is positive only at $d{=}256$ and disappears at larger scales. We hypothesize that $\phi$ for any depth-recurrent architecture with a fixed context anchor depends on the representational capacity of the prelude: a small prelude produces a representation that the core can fully exploit in a few iterations, after which additional loops do nothing; a large prelude produces a richer representation that rewards more refinement steps before saturating. If correct, this is a refinement Schwethelm's single-$\phi$ framework does not capture.
 
 \paragraph{Methodological notes for the eventual fit.}
 Two notes for the eventual numeric $\phi$ computation: (1) our training token budget is fixed at $\sim$1B tokens, so we measure $\phi(d, D{=}1\text{B})$, not the asymptotic $\phi$ of \citeauthor{schwethelm2026isodepth}; (2) \cart{}'s \texttt{CoreBlock} does not include $K, V$ projections (those are prelude-computed), so the $N_\text{rec}$ definition must be stated explicitly when comparing to architectures whose loop body re-projects $K, V$ each iteration. We will report $\phi(d)$ as a directional refinement of Schwethelm's framework rather than a single number directly comparable to their values.
@@ -694,9 +723,9 @@ Stage 1 rankings are predictive of Stage 2 rankings at $d=256$: Stage 1 showed $
 We report four results that have not, to our knowledge, been demonstrated in prior work on looped transformers:
 
 \begin{enumerate}[leftmargin=*, topsep=2pt, itemsep=1pt]
-  \item Across 64 configurations covering four widths, four loop counts, and four prelude depths, the LTI gate converges to a universal spectral radius $\varrho \approx 0.893$, adapting weakly to model width and not at all to loop count.
+  \item Across 36 fully-trained Stage 2 configurations, the LTI gate settles in the narrow band $\varrho \in [0.79, 0.83]$, with $\varrho$ rising monotonically with both $d$ (+0.033 from $d{=}256$ to $d{=}1024$ at $R{=}6$) and weakly with $R$ (+0.008 to +0.009 per pair of loops). The earlier ``universal $\varrho \approx 0.893$'' reported from Stage 1 at step 3{,}000 was a transient: $\varrho$ continues to decay through full training.
   \item Prelude depth $P$ dominates loop count $R$ in every condition tested ($P{=}6 > P{=}4 > P{=}3 > P{=}2$ holds without exception).
-  \item The benefit of recurrence depth grows monotonically with model width: from $-0.25\%$ at $d{=}256$ to $+5.24\%$ at $d{=}1024$ (Stage 1, $R{=}2 \to R{=}8$ on Wikipedia perplexity).
+  \item At Stage 1 (3{,}000 steps), the benefit of recurrence depth appeared to grow monotonically with model width, from $-0.25\%$ at $d{=}256$ to $+5.24\%$ at $d{=}1024$ ($R{=}2 \to R{=}8$ on \pplwiki). At Stage 2 (30{,}500 steps, $\sim 10\times$ the tokens), this trend reverses: $R{=}6$ is the best $R$ at every scale $d \geq 512$, and going to $R{=}10$ regresses by up to $1\%$. Whether further training restores R-benefit is the subject of the planned extended-training experiment.
   \item At $d{=}512$, all six complete Stage 2 seeds show \cart{} outperforming a parameter-matched Dense baseline by $\sim 9\%$ on Wikipedia and $\sim 16\%$ on FineWeb-Edu perplexity, while the synthetic narrow-vocabulary TinyStories gap is only $\sim 1.5\%$, suggesting recurrence yields representations whose advantage grows with the difficulty of the language-modeling target. (See Section~\ref{sec:eval_terminology} for the precise sense in which we use ``natural-language'' here; this is in-distribution generalization, not out-of-distribution.)
 \end{enumerate}
 

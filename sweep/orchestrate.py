@@ -16,7 +16,8 @@ import time
 from pathlib import Path
 
 _ROOT = Path(__file__).parent.parent
-TRAIN_ONE = _ROOT / "train" / "train_one.py"
+TRAIN_ONE   = _ROOT / "train" / "train_one.py"
+TRAIN_DENSE = _ROOT / "train" / "train_dense.py"
 PYTHON = sys.executable
 
 MAX_RETRIES        = 3
@@ -35,10 +36,10 @@ def open_db(db_path: str) -> sqlite3.Connection:
 
 def get_pending(conn, stage: int, hardware: str):
     return conn.execute(
-        """SELECT config_id, d_model, n_loops, n_prelude, seed
+        """SELECT config_id, d_model, n_loops, n_prelude, seed, model_type
            FROM configs
            WHERE stage=? AND hardware=? AND status='pending'
-           ORDER BY d_model, n_loops, n_prelude, seed""",
+           ORDER BY model_type, d_model, n_loops, n_prelude, seed""",
         (stage, hardware),
     ).fetchall()
 
@@ -64,15 +65,19 @@ def median_wall_sec(conn, stage: int, hardware: str) -> float | None:
 
 def run_one(config_id: str, db_path: str, max_steps: int | None,
             train_bin: str | None, val_dir: str | None,
-            ckpt_interval: int | None, seq_len: int | None) -> int:
+            ckpt_interval: int | None, seq_len: int | None,
+            model_type: str = "cart") -> int:
+    # Dispatch by model_type: CART uses train_one.py, Dense uses train_dense.py.
+    # train_dense.py has SEQ_LEN hardcoded (1024) so --seq-len is silently dropped.
+    script = TRAIN_DENSE if model_type == "dense" else TRAIN_ONE
     cmd = [
-        PYTHON, str(TRAIN_ONE),
+        PYTHON, str(script),
         "--config-id", config_id,
         "--db", db_path,
     ]
     if max_steps:
         cmd += ["--max-steps", str(max_steps)]
-    if seq_len:
+    if seq_len and model_type != "dense":
         cmd += ["--seq-len", str(seq_len)]
     if ckpt_interval:
         cmd += ["--ckpt-interval", str(ckpt_interval)]
@@ -134,8 +139,13 @@ def main():
 
     for i, row in enumerate(pending):
         cid = row["config_id"]
-        print(f"[{i+1}/{len(pending)}] config_id={cid}  "
-              f"d={row['d_model']}  R={row['n_loops']}  P={row['n_prelude']}  seed={row['seed']}")
+        mtype = row["model_type"] if "model_type" in row.keys() else "cart"
+        if mtype == "dense":
+            print(f"[{i+1}/{len(pending)}] config_id={cid}  "
+                  f"Dense d={row['d_model']}  layers={row['n_loops']}  seed={row['seed']}")
+        else:
+            print(f"[{i+1}/{len(pending)}] config_id={cid}  "
+                  f"d={row['d_model']}  R={row['n_loops']}  P={row['n_prelude']}  seed={row['seed']}")
 
         # All configs use mixed data for cross-scale comparability
         if args.train_bin:
@@ -167,7 +177,7 @@ def main():
                 reset_to_pending(conn, cid)
 
             rc = run_one(cid, args.db, effective_max_steps, effective_train_bin, args.val_dir,
-                        args.ckpt_interval, effective_seq_len)
+                        args.ckpt_interval, effective_seq_len, model_type=mtype)
 
             if rc == 0:
                 success = True

@@ -1,14 +1,26 @@
 """
-Inserts DenseBaseline configs into results.db — one per d_model scale.
-Also adds model_type column to configs table if not present.
+Inserts DenseBaseline configs into results.db. Configurable across d_model
+scales, n_layers, and seeds, so the same script generates both
+stored-matched (e.g., 7-layer) and effective-matched (e.g., 12-layer) Dense
+baselines for comparison against CART.
 
 Dense baselines use:
-    n_loops  = 7   (stored as n_layers — 7 uniform layers)
-    n_prelude = 0  (sentinel — no prelude concept in DenseBaseline)
+    n_loops    = n_layers  (DenseBaseline reuses this column to store layer count)
+    n_prelude  = 0          (sentinel — no prelude in DenseBaseline)
     model_type = 'dense'
 
+config_id is sha256("dense_{d_model}_{n_layers}_{seed}")[:16], so different
+(d_model, n_layers, seed) tuples each get unique IDs and coexist in the DB.
+
 Usage:
+    # Default: 7L Dense at all four scales, single seed (matches old behavior)
     python sweep/generate_baselines.py --db results.db
+
+    # Both stored-matched and effective-matched Dense at d=1024, three seeds:
+    python sweep/generate_baselines.py --db results.db \\
+        --scales 1024 --n-layers 7,12 --seeds 42,137,271
+
+    # Delete existing dense configs first (use carefully):
     python sweep/generate_baselines.py --db results.db --force
 """
 import argparse
@@ -19,14 +31,18 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-DENSE_DIMS    = [256, 512, 768, 1024]
-N_LAYERS      = 7
-BASELINE_SEED = 42
+DEFAULT_SCALES    = [256, 512, 768, 1024]
+DEFAULT_N_LAYERS  = [7]
+DEFAULT_SEEDS     = [42]
 
 
 def config_id(d_model: int, n_layers: int, seed: int) -> str:
     blob = f"dense_{d_model}_{n_layers}_{seed}".encode()
     return hashlib.sha256(blob).hexdigest()[:16]
+
+
+def parse_int_list(s: str) -> list:
+    return [int(x) for x in s.split(",")]
 
 
 def open_db(db_path: str) -> sqlite3.Connection:
@@ -49,8 +65,14 @@ def ensure_model_type_column(conn):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--db", default="results.db")
+    parser.add_argument("--scales", type=parse_int_list, default=DEFAULT_SCALES,
+                        help="Comma-separated d_model values (default: 256,512,768,1024)")
+    parser.add_argument("--n-layers", type=parse_int_list, default=DEFAULT_N_LAYERS,
+                        help="Comma-separated layer counts (default: 7)")
+    parser.add_argument("--seeds", type=parse_int_list, default=DEFAULT_SEEDS,
+                        help="Comma-separated seeds (default: 42)")
     parser.add_argument("--force", action="store_true",
-                        help="Delete existing dense baseline configs and re-insert")
+                        help="Delete ALL existing dense baseline configs and re-insert")
     args = parser.parse_args()
 
     conn = open_db(args.db)
@@ -62,19 +84,21 @@ def main():
         print("Cleared existing dense baseline configs.")
 
     configs = []
-    for d in DENSE_DIMS:
+    for d in args.scales:
         hw = "3090" if d == 1024 else "3050"
-        cid = config_id(d, N_LAYERS, BASELINE_SEED)
-        configs.append({
-            "config_id": cid,
-            "d_model":   d,
-            "n_loops":   N_LAYERS,   # stores n_layers for DenseBaseline
-            "n_prelude": 0,          # sentinel — no prelude in DenseBaseline
-            "seed":      BASELINE_SEED,
-            "stage":     2,          # baselines run at Stage 2 scale (61k steps)
-            "hardware":  hw,
-            "model_type": "dense",
-        })
+        for n_layers in args.n_layers:
+            for seed in args.seeds:
+                cid = config_id(d, n_layers, seed)
+                configs.append({
+                    "config_id": cid,
+                    "d_model":   d,
+                    "n_loops":   n_layers,   # stores n_layers for DenseBaseline
+                    "n_prelude": 0,          # sentinel — no prelude in DenseBaseline
+                    "seed":      seed,
+                    "stage":     2,          # baselines run at Stage 2 scale
+                    "hardware":  hw,
+                    "model_type": "dense",
+                })
 
     inserted = 0
     for cfg in configs:
@@ -97,15 +121,15 @@ def main():
           f"({len(configs) - inserted} already existed).")
 
     rows = conn.execute(
-        "SELECT config_id, d_model, n_loops, hardware, status "
-        "FROM configs WHERE model_type='dense' ORDER BY d_model"
+        "SELECT config_id, d_model, n_loops, seed, hardware, status "
+        "FROM configs WHERE model_type='dense' ORDER BY d_model, n_loops, seed"
     ).fetchall()
 
-    print(f"\n{'config_id':18s}  {'d':>4}  {'layers':>6}  {'hw':>4}  status")
-    print("-" * 50)
+    print(f"\n{'config_id':18s}  {'d':>4}  {'layers':>6}  {'seed':>4}  {'hw':>4}  status")
+    print("-" * 60)
     for r in rows:
         print(f"{r['config_id']}  {r['d_model']:4d}  {r['n_loops']:6d}  "
-              f"{r['hardware']:>4}  {r['status']}")
+              f"{r['seed']:4d}  {r['hardware']:>4}  {r['status']}")
 
     print(f"\nDB: {args.db}")
     print("Run baselines with:")
