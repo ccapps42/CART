@@ -1,0 +1,284 @@
+"""
+Inspect and clean up the checkpoints/ directory.
+
+The on-disk layout is `checkpoints/{config_id_hash}/step_{step}.pt`. The hashes
+are opaque, so this tool joins the disk listing with results.db to surface what
+each config_id actually represents, and provides safe cleanup modes.
+
+Read-only by default. Cleanup deletions are explicit and refuse to touch any
+config whose status is 'running' (those checkpoints are needed for resume).
+
+Examples:
+    # Report what's on disk (default, read-only)
+    python tools/checkpoint_inventory.py
+
+    # Write/refresh checkpoints/INDEX.md (markdown table for grep/browse)
+    python tools/checkpoint_inventory.py --index
+
+    # Dry-run cleanup: show what would be deleted under a policy
+    python tools/checkpoint_inventory.py --cleanup --keep final --dry-run
+
+    # Actually delete intermediates, keep final per config
+    python tools/checkpoint_inventory.py --cleanup --keep final
+
+    # Keep final + one mid-step per config (safer)
+    python tools/checkpoint_inventory.py --cleanup --keep final+midpoint
+
+    # Delete EVERYTHING belonging to configs with DB status='reference'
+    python tools/checkpoint_inventory.py --cleanup --keep none --for-status reference
+"""
+import argparse
+import sqlite3
+import sys
+from pathlib import Path
+
+_ROOT      = Path(__file__).parent.parent
+CKPT_DIR   = _ROOT / "checkpoints"
+DB_PATH    = _ROOT / "results.db"
+INDEX_PATH = CKPT_DIR / "INDEX.md"
+
+KEEP_POLICIES = ["all", "final", "final+midpoint", "none"]
+
+
+def load_configs(db_path: Path) -> dict:
+    """Return {config_id: dict(row)} for every row in configs."""
+    conn = sqlite3.connect(str(db_path))
+    conn.row_factory = sqlite3.Row
+    rows = conn.execute(
+        """SELECT config_id, d_model, n_loops, n_prelude, seed,
+                  stage, status, hardware, model_type
+           FROM configs"""
+    ).fetchall()
+    conn.close()
+    return {r["config_id"]: dict(r) for r in rows}
+
+
+def scan_disk(ckpt_dir: Path) -> dict:
+    """Return {config_id: [(step, size_bytes, path), ...]}."""
+    out = {}
+    if not ckpt_dir.exists():
+        return out
+    for d in sorted(ckpt_dir.iterdir()):
+        if not d.is_dir():
+            continue
+        files = []
+        for f in d.glob("step_*.pt"):
+            try:
+                step = int(f.stem.split("_")[1])
+                files.append((step, f.stat().st_size, f))
+            except (IndexError, ValueError):
+                continue
+        files.sort(key=lambda x: x[0])
+        out[d.name] = files
+    return out
+
+
+def fmt_size(n_bytes: float) -> str:
+    for unit in ("B", "KB", "MB", "GB"):
+        if n_bytes < 1024:
+            return f"{n_bytes:7.1f} {unit}"
+        n_bytes /= 1024
+    return f"{n_bytes:7.1f} TB"
+
+
+def describe(cfg: dict | None) -> str:
+    if cfg is None:
+        return "UNKNOWN (no DB record)"
+    if cfg["model_type"] == "dense":
+        return f"Dense d={cfg['d_model']} layers={cfg['n_loops']} seed={cfg['seed']}"
+    return (
+        f"CART  d={cfg['d_model']} R={cfg['n_loops']} P={cfg['n_prelude']} "
+        f"seed={cfg['seed']}"
+    )
+
+
+def sort_key(item, configs):
+    cid, _ = item
+    c = configs.get(cid, {})
+    # Order: model_type, d_model, n_loops, n_prelude, seed
+    return (
+        c.get("model_type") or "zzz",
+        c.get("d_model") or 0,
+        c.get("n_loops") or 0,
+        c.get("n_prelude") or 0,
+        c.get("seed") or 0,
+    )
+
+
+def print_report(configs: dict, disk: dict, out=sys.stdout):
+    print("CHECKPOINT INVENTORY", file=out)
+    print("=" * 110, file=out)
+    print(
+        f"{'config_id':>16}  {'size':>11}  {'files':>5}  "
+        f"{'model':>5}  {'status':>10}  description",
+        file=out,
+    )
+    print("-" * 110, file=out)
+    total_size = 0
+    total_files = 0
+    by_status = {}
+    for cid, files in sorted(disk.items(), key=lambda kv: sort_key(kv, configs)):
+        cfg = configs.get(cid)
+        size = sum(f[1] for f in files)
+        total_size += size
+        total_files += len(files)
+        status = (cfg["status"] if cfg else "—")
+        by_status.setdefault(status, [0, 0])
+        by_status[status][0] += size
+        by_status[status][1] += len(files)
+        mtype  = (cfg["model_type"] if cfg else "?")
+        print(
+            f"{cid:>16}  {fmt_size(size)}  {len(files):>5}  "
+            f"{mtype:>5}  {status:>10}  {describe(cfg)}",
+            file=out,
+        )
+    print("-" * 110, file=out)
+    print(
+        f"{'TOTAL':>16}  {fmt_size(total_size)}  {total_files:>5}",
+        file=out,
+    )
+    if by_status:
+        print(file=out)
+        print("By status:", file=out)
+        for status, (sz, n) in sorted(by_status.items()):
+            print(f"  {status:>10}  {fmt_size(sz)}  {n:>4} files", file=out)
+
+
+def write_index(configs: dict, disk: dict):
+    lines = [
+        "# Checkpoints index",
+        "",
+        "Auto-generated by `tools/checkpoint_inventory.py --index`.",
+        "Re-run that command after training runs to refresh.",
+        "",
+        "| config_id | model | d | R/L | P | seed | stage | status | files | size |",
+        "|---|---|---|---|---|---|---|---|---|---|",
+    ]
+    total_size  = 0
+    total_files = 0
+    for cid, files in sorted(disk.items(), key=lambda kv: sort_key(kv, configs)):
+        cfg = configs.get(cid)
+        size  = sum(f[1] for f in files)
+        total_size  += size
+        total_files += len(files)
+        if files:
+            steps = [f[0] for f in files]
+            file_str = (
+                f"{len(files)} (step {min(steps)}..{max(steps)})"
+                if len(files) > 1 else f"1 (step {steps[0]})"
+            )
+        else:
+            file_str = "0"
+        if cfg is None:
+            row = f"| `{cid}` | ? | ? | ? | ? | ? | ? | — | {file_str} | {fmt_size(size).strip()} |"
+        else:
+            r_or_l = cfg["n_loops"]
+            p_disp = cfg["n_prelude"] if cfg["model_type"] != "dense" else "—"
+            row = (
+                f"| `{cid}` | {cfg['model_type']} | {cfg['d_model']} | {r_or_l} | "
+                f"{p_disp} | {cfg['seed']} | {cfg['stage']} | {cfg['status']} | "
+                f"{file_str} | {fmt_size(size).strip()} |"
+            )
+        lines.append(row)
+    lines.append("")
+    lines.append(f"**Total:** {total_files} files, {fmt_size(total_size).strip()}")
+    lines.append("")
+    INDEX_PATH.parent.mkdir(parents=True, exist_ok=True)
+    INDEX_PATH.write_text("\n".join(lines), encoding="utf-8")
+    print(f"\nWrote {INDEX_PATH}")
+
+
+def cleanup_plan(disk: dict, configs: dict, keep: str, for_status: str | None) -> list:
+    """Build the list of files to delete. Never touches checkpoints of running configs."""
+    plan = []
+    for cid, files in disk.items():
+        cfg = configs.get(cid)
+        # SAFETY: never delete checkpoints of running configs (needed for resume)
+        if cfg and cfg["status"] == "running":
+            continue
+        # SAFETY: if no DB record, leave alone — could be orphaned or in-progress
+        if cfg is None:
+            continue
+        # Status filter
+        if for_status is not None and cfg["status"] != for_status:
+            continue
+        # Apply keep policy
+        if keep == "all":
+            continue
+        if not files:
+            continue
+        files_sorted = sorted(files, key=lambda x: x[0])
+        keep_paths = set()
+        if keep == "final":
+            keep_paths.add(files_sorted[-1][2])
+        elif keep == "final+midpoint":
+            keep_paths.add(files_sorted[-1][2])
+            if len(files_sorted) >= 2:
+                mid_idx = len(files_sorted) // 2
+                keep_paths.add(files_sorted[mid_idx][2])
+        # keep == "none" leaves keep_paths empty
+        for step, sz, p in files:
+            if p in keep_paths:
+                continue
+            reason_bits = [f"keep={keep}"]
+            if for_status is not None:
+                reason_bits.append(f"for-status={for_status}")
+            plan.append((cid, p, sz, ", ".join(reason_bits)))
+    return plan
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("--db", default=str(DB_PATH))
+    parser.add_argument("--ckpt-dir", default=str(CKPT_DIR))
+    parser.add_argument("--index", action="store_true",
+                        help="Write/refresh checkpoints/INDEX.md")
+    parser.add_argument("--cleanup", action="store_true",
+                        help="Enable cleanup mode (read --keep and --for-status)")
+    parser.add_argument("--keep", default="all", choices=KEEP_POLICIES,
+                        help="Cleanup policy: which checkpoints to keep per config")
+    parser.add_argument("--for-status", default=None,
+                        help="Only target configs whose DB status matches this value "
+                             "(e.g., reference, failed, complete)")
+    parser.add_argument("--dry-run", action="store_true",
+                        help="Print what cleanup would delete but do not delete")
+    args = parser.parse_args()
+
+    configs = load_configs(Path(args.db))
+    disk    = scan_disk(Path(args.ckpt_dir))
+
+    print_report(configs, disk)
+
+    if args.index:
+        write_index(configs, disk)
+
+    if args.cleanup:
+        plan = cleanup_plan(disk, configs, args.keep, args.for_status)
+        if not plan:
+            print("\nCleanup: nothing matches the requested policy.")
+            return
+        total_size = sum(p[2] for p in plan)
+        action = "DRY-RUN: would delete" if args.dry_run else "Deleting"
+        print(f"\n{action} {len(plan)} file(s), {fmt_size(total_size).strip()} total:")
+        for cid, path, sz, reason in plan:
+            try:
+                rel = path.relative_to(_ROOT)
+            except ValueError:
+                rel = path
+            print(f"  {fmt_size(sz)}  {rel}  ({reason})")
+        if not args.dry_run:
+            errors = 0
+            for cid, path, sz, reason in plan:
+                try:
+                    path.unlink()
+                except OSError as e:
+                    print(f"  FAILED: {path}: {e}")
+                    errors += 1
+            if errors:
+                print(f"\nDeleted {len(plan) - errors} file(s), {errors} errors.")
+            else:
+                print(f"\nDeleted {len(plan)} file(s), reclaimed {fmt_size(total_size).strip()}.")
+
+
+if __name__ == "__main__":
+    main()

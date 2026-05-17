@@ -266,6 +266,31 @@ def main():
                 weight_decay=WEIGHT_DECAY,
             )
 
+        # --- Resume from checkpoint if one exists ---
+        # Looks for checkpoints/{config_id}/step_*.pt, loads the latest valid one,
+        # and sets start_step accordingly. Falls back to fresh training if none.
+        start_step = 1
+        ckpt_dir = CKPT_DIR / config_id
+        if ckpt_dir.exists():
+            step_files = []
+            for f in ckpt_dir.glob("step_*.pt"):
+                try:
+                    step_files.append((int(f.stem.split("_")[1]), f))
+                except (IndexError, ValueError):
+                    pass
+            if step_files:
+                step_files.sort(key=lambda x: x[0])
+                latest_step, latest_path = step_files[-1]
+                if latest_step >= total_steps:
+                    print(f"Found checkpoint at final step {latest_step}; nothing to resume.")
+                else:
+                    print(f"Resuming from {latest_path} (step {latest_step})...")
+                    ckpt = torch.load(str(latest_path), map_location=device, weights_only=False)
+                    model.load_state_dict(ckpt["model_state_dict"])
+                    optimizer.load_state_dict(ckpt["optimizer_state_dict"])
+                    start_step = latest_step + 1
+                    print(f"Resumed. Will train from step {start_step} to {total_steps}.")
+
         # --- Data ---
         if not train_bin.exists():
             raise FileNotFoundError(
@@ -291,6 +316,18 @@ def main():
                 train_iter = iter(train_loader)
                 return next(train_iter)
 
+        # Advance the data iterator to the resume point. Each training step consumes
+        # GRAD_ACCUM micro-batches. The FixedOrderDataset is positionally deterministic,
+        # so skipping (start_step - 1) * GRAD_ACCUM micro-batches aligns the iterator
+        # with where it would have been at the resumed step.
+        if start_step > 1:
+            n_skip = (start_step - 1) * GRAD_ACCUM
+            print(f"Advancing data loader {n_skip:,} micro-batches to resume step {start_step}...")
+            skip_start = time.perf_counter()
+            for _ in range(n_skip):
+                next_batch()
+            print(f"Data loader aligned in {time.perf_counter() - skip_start:.1f}s.")
+
         # --- Mixed precision ---
         use_amp = (device.type == "cuda")
         amp_ctx = (
@@ -309,7 +346,7 @@ def main():
         if device.type == "cuda":
             torch.cuda.reset_peak_memory_stats()
 
-        for step in range(1, total_steps + 1):
+        for step in range(start_step, total_steps + 1):
             # Set learning rate
             lr = get_lr(step, WARMUP_STEPS, total_steps, PEAK_LR, MIN_LR)
             for pg in optimizer.param_groups:
