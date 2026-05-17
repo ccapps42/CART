@@ -501,13 +501,13 @@ Stage 2 training is ongoing at time of writing. Table~\ref{tab:stage2_results} r
 512 & 8  & 6 & 3.366 & 27.20 & 27.60 &  &  &  & Complete \\
 512 & 10 & 6 & 3.367 & 27.38 & 27.55 &  &  &  & Complete \\
 \midrule
-768 & 6  & 6 & \tbd{} & \tbd{} & \tbd{} & \tbd{} & \tbd{} & \tbd{} & In progress \\
-768 & 8  & 6 & \tbd{} & \tbd{} & \tbd{} &  &  &  & Pending \\
-768 & 10 & 6 & \tbd{} & \tbd{} & \tbd{} &  &  &  & Pending \\
+768 & 6  & 6 & 3.010 & 22.85 & 23.15 & \multirow{3}{*}{\tbd{}} & \multirow{3}{*}{\tbd{}} & \multirow{3}{*}{\tbd{}} & Complete \\
+768 & 8  & 6 & 3.023 & 22.86 & 23.30 &  &  &  & Complete \\
+768 & 10 & 6 & 3.024 & 22.96 & 23.38 &  &  &  & Complete \\
 \midrule
-1024 & 6  & 6 & \tbd{} & \tbd{} & \tbd{} & \tbd{} & \tbd{} & \tbd{} & Pending \\
-1024 & 8  & 6 & \tbd{} & \tbd{} & \tbd{} &  &  &  & Pending \\
-1024 & 10 & 6 & \tbd{} & \tbd{} & \tbd{} &  &  &  & Pending \\
+1024 & 6  & 6 & 2.798 & 20.35 & 20.67 & \multirow{3}{*}{\tbd{}} & \multirow{3}{*}{\tbd{}} & \multirow{3}{*}{\tbd{}} & Complete \\
+1024 & 8  & 6 & 2.808 & 20.40 & 20.79 &  &  &  & Complete \\
+1024 & 10 & 6 & 2.811 & 20.50 & 20.81 &  &  &  & Complete \\
 \bottomrule
 \end{tabular}
 \end{table*}
@@ -729,7 +729,7 @@ We report four results that have not, to our knowledge, been demonstrated in pri
   \item At $d{=}512$, all six complete Stage 2 seeds show \cart{} outperforming a parameter-matched Dense baseline by $\sim 9\%$ on Wikipedia and $\sim 16\%$ on FineWeb-Edu perplexity, while the synthetic narrow-vocabulary TinyStories gap is only $\sim 1.5\%$, suggesting recurrence yields representations whose advantage grows with the difficulty of the language-modeling target. (See Section~\ref{sec:eval_terminology} for the precise sense in which we use ``natural-language'' here; this is in-distribution generalization, not out-of-distribution.)
 \end{enumerate}
 
-Complete Stage 2 results across $d \in \{768, 1024\}$, full Dense baseline reruns, and downstream benchmark evaluations are forthcoming and will update this preprint upon training completion.
+Parameter-matched Dense baselines at $d{=}1024$ (both stored-matched and effective-matched variants) and the P=4 R=10 d=1024 ablation testing whether prelude depth dominates loop count are running at the time of this preprint and will update the relevant tables and discussion upon completion.
 
 % ============================================================
 \section*{Code and Data Availability}
