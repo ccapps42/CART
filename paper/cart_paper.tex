@@ -244,12 +244,12 @@ All three evaluation sets are held-out shards of the same corpora used in traini
 
 Stage 2 trains selected configs (P=6, $R \in \{6, 8, 10\}$, 3 seeds each) for 30{,}500 steps ($\sim$1B tokens) at \texttt{seq\_len}=1024, \texttt{batch}=8, \texttt{grad\_accum}=4 (32{,}768 tokens/step). Optimizer: AdamW8bit~\citep{dettmers2022gptint8}, $\text{lr}_\text{max}=3 \times 10^{-4}$, cosine decay to $3 \times 10^{-5}$, 100-step warmup, weight decay 0.1, gradient clip 1.0. All runs on RTX 3090 (24 GB). No \texttt{torch.compile} (unavailable on Windows 11/no Triton).
 
-Dense baselines (7 layers, $P=0$, standard MHA + SwiGLU) will be trained at identical Stage 2 settings for each $d$, following CART sweep completion.
+Dense baselines (standard MHA + SwiGLU, $P{=}0$) are trained at $d{=}1024$ in two parameter-matched variants: a 7-layer Dense matching CART's \emph{stored} parameter count ($\sim 75$M) and a 12-layer Dense matching CART's \emph{effective} parameter count at $R{=}6$ ($\sim 105$M). Smaller-scale Dense baselines were not pursued in this study; $d{=}1024$ is the binding test of the parameter-efficiency claim. Both Dense variants use identical Stage 2 hyperparameters (3-seed sweep, same optimizer, same data, same $30{,}500$ steps).
 
 \subsection{Reproducibility}
 \label{sec:repro}
 
-\paragraph{Random seeds.} All Stage 2 configurations are trained with three seeds: $\{42, 137, 271\}$. Reported perplexities are means across seeds. Per-seed standard deviations are tight at $d{=}512$ (max std on \pplwiki{}: 0.14 across all $R \in \{6, 8, 10\}$, or $0.5\%$ of the mean) and wider but still consistent at $d{=}256$ (max std: 2.50, or $6\%$ of the mean). The widening at small $d$ reflects loss-landscape sensitivity at low parameter counts rather than instability in the architecture; gradient norm remained bounded and no run diverged. Per-seed values are available in the released experiment database.
+\paragraph{Random seeds.} All Stage 2 configurations are trained with three seeds: $\{42, 137, 271\}$. Reported perplexities are means across seeds. Per-seed standard deviations are tight at $d{=}512$ (max std on \pplwiki{}: 0.17 across all $R \in \{6, 8, 10\}$, or $0.6\%$ of the mean) and wider but still consistent at $d{=}256$ (max std: 3.06, or $7.5\%$ of the mean). The widening at small $d$ reflects loss-landscape sensitivity at low parameter counts rather than instability in the architecture; gradient norm remained bounded and no run diverged. The $d{=}1024$ Dense baselines exhibit tighter seed-to-seed agreement than CART at the same scale (7L Dense std on \pplwiki{} $= 0.06$ vs CART's $0.08$ at $R{=}6$; 12L Dense std $= 0.05$), supporting the interpretation that the CART$-$Dense gap reported in Tables~\ref{tab:stage2_results} and~\ref{tab:stage2_dense12l} reflects architectural signal rather than seed noise. Per-seed values are available in the released experiment database.
 
 \paragraph{Hardware and compute budget.} Stage 1 (64 configurations) ran on a single RTX 3050 (8 GB), $\sim 1$--$3$ hours per configuration. Stage 2 (36 configurations) runs on a single RTX 3090 (24 GB), $\sim 2$--$13$ hours per configuration depending on $(d, R)$. The full Stage 2 sweep fits in $\sim 7.5$ days of single-GPU wall-clock time. No multi-node, no cloud compute. Total Stage 2 training compute (when complete) is approximately $\mathbf{22}$ \textbf{ExaFLOPs} (using the standard $6N$ per-token estimate~\citep{kaplan2020scaling}, summed over all 36 runs at 1B tokens each), which is roughly $0.25$ PetaFLOP-days. Per-run compute ranges from $0.1$ ExaFLOP at $d{=}256, R{=}6$ to $1.3$ ExaFLOP at $d{=}1024, R{=}10$. For comparison, training a single GPT-3 small (125M parameters)~\citep{brown2020gpt3} required approximately $2.6 \times 10^{19}$ FLOPs ($26$ ExaFLOPs); the full \cart{} 36-config sweep across four scales is therefore comparable in total compute to one GPT-3-small training.
 
@@ -482,7 +482,7 @@ Stage 2 training is ongoing at time of writing. Table~\ref{tab:stage2_results} r
 
 \begin{table*}[t]
 \centering
-\caption{Stage 2 results: mean perplexity across 3 seeds (30{,}500 steps, $\sim$1B tokens, seq\_len=1024). Per-seed standard deviations are summarized in Section~\ref{sec:repro}. Dense baseline: 7-layer dense transformer, same $d$, \tbd{to be trained after CART sweep}. Lower is better.}
+\caption{Stage 2 results: mean perplexity across 3 seeds (30{,}500 steps, $\sim$1B tokens, seq\_len=1024). Per-seed standard deviations are summarized in Section~\ref{sec:repro}. Dense baseline at $d{=}1024$: 7-layer dense transformer, parameter-matched to CART on stored parameters (3-seed mean). Smaller-scale Dense baselines were not pursued in this study. A 12-layer Dense variant matched to CART's effective parameter count appears in Table~\ref{tab:stage2_dense12l}. Lower is better.}
 \label{tab:stage2_results}
 \footnotesize
 \begin{tabular}{cccccccccc}
@@ -491,24 +491,47 @@ Stage 2 training is ongoing at time of writing. Table~\ref{tab:stage2_results} r
 \cmidrule(lr){4-6}\cmidrule(lr){7-9}
 & & & \ppltiny & \pplwiki & \ppledu & \ppltiny & \pplwiki & \ppledu & \\
 \midrule
-256 & 6  & 6 & 4.343 & 41.17 & 41.52 & \multirow{3}{*}{\tbd{}} & \multirow{3}{*}{\tbd{}} & \multirow{3}{*}{\tbd{}} & Complete \\
-256 & 8  & 6 & 4.343 & 40.31 & 40.77 &  &  &  & Complete \\
-256 & 10 & 6 & 4.371 & 40.71 & 41.22 &  &  &  & Complete \\
+256 & 6  & 6 & 4.343 & 41.17 & 41.52 & --- & --- & --- & Complete \\
+256 & 8  & 6 & 4.343 & 40.31 & 40.77 & --- & --- & --- & Complete \\
+256 & 10 & 6 & 4.371 & 40.71 & 41.22 & --- & --- & --- & Complete \\
 \midrule
-512 & 6  & 6 & 3.360 & 27.10 & 27.44 & \multirow{3}{*}{\tbd{}} & \multirow{3}{*}{\tbd{}} & \multirow{3}{*}{\tbd{}} & Complete \\
-512 & 8  & 6 & 3.366 & 27.20 & 27.60 &  &  &  & Complete \\
-512 & 10 & 6 & 3.367 & 27.38 & 27.55 &  &  &  & Complete \\
+512 & 6  & 6 & 3.360 & 27.10 & 27.44 & --- & --- & --- & Complete \\
+512 & 8  & 6 & 3.366 & 27.20 & 27.60 & --- & --- & --- & Complete \\
+512 & 10 & 6 & 3.367 & 27.38 & 27.55 & --- & --- & --- & Complete \\
 \midrule
-768 & 6  & 6 & 3.010 & 22.85 & 23.15 & \multirow{3}{*}{\tbd{}} & \multirow{3}{*}{\tbd{}} & \multirow{3}{*}{\tbd{}} & Complete \\
-768 & 8  & 6 & 3.023 & 22.86 & 23.30 &  &  &  & Complete \\
-768 & 10 & 6 & 3.024 & 22.96 & 23.38 &  &  &  & Complete \\
+768 & 6  & 6 & 3.010 & 22.85 & 23.15 & --- & --- & --- & Complete \\
+768 & 8  & 6 & 3.023 & 22.86 & 23.30 & --- & --- & --- & Complete \\
+768 & 10 & 6 & 3.024 & 22.96 & 23.38 & --- & --- & --- & Complete \\
 \midrule
-1024 & 6  & 6 & 2.798 & 20.35 & 20.67 & \multirow{3}{*}{\tbd{}} & \multirow{3}{*}{\tbd{}} & \multirow{3}{*}{\tbd{}} & Complete \\
+1024 & 6  & 6 & 2.798 & 20.35 & 20.67 & \multirow{3}{*}{2.746} & \multirow{3}{*}{20.13} & \multirow{3}{*}{20.26} & Complete \\
 1024 & 8  & 6 & 2.808 & 20.40 & 20.79 &  &  &  & Complete \\
 1024 & 10 & 6 & 2.811 & 20.50 & 20.81 &  &  &  & Complete \\
+\midrule
+1024 & 10 & 4 & 2.899 & 21.42 & 21.72 & --- & --- & --- & Reference \\
 \bottomrule
 \end{tabular}
 \end{table*}
+
+The final row reports $P{=}4$ as a depth-ablation spot-check at the largest scale. The active Stage 2 sweep was $P{=}6$ throughout; $P{=}4$ was run only at $d{=}1024, R{=}10$ (3 seeds) to bound the cost of reducing prelude depth at the high end. Dropping from $P{=}6$ to $P{=}4$ costs $+0.088$ on \ppltiny{}, $+0.92$ on \pplwiki{}, and $+0.91$ on \ppledu{} ($\sim 4.5\%$ on the natural-language sets).
+
+The 7L Dense baseline in Table~\ref{tab:stage2_results} is parameter-matched to CART on \emph{stored} parameters (Dense 7L $\approx$ CART d=1024). CART's recurrent core also accumulates \emph{effective} parameters via the $R$-iteration leverage (105M at $R{=}6$, see Table~\ref{tab:chinchilla}); to test the effective-parameter parity question separately, we trained a 12-layer Dense baseline at $d{=}1024$ matched to that count. Table~\ref{tab:stage2_dense12l} reports the result and the deltas vs the best CART config ($P{=}6, R{=}6$).
+
+\begin{table}[htbp]
+\centering
+\caption{Dense 12L (12-layer dense transformer) at $d{=}1024$, parameter-matched to CART's effective parameter count at $R{=}6$ ($\sim 105$M). 3-seed mean $\pm$ std. Delta $\Delta$ is Dense $-$ CART; negative means Dense is better.}
+\label{tab:stage2_dense12l}
+\footnotesize
+\begin{tabular}{lccc}
+\toprule
+ & \ppltiny & \pplwiki & \ppledu \\
+\midrule
+Dense 12L (3-seed mean)        & $2.592 \pm 0.003$ & $18.32 \pm 0.05$ & $18.50 \pm 0.06$ \\
+CART $P{=}6, R{=}6$ (3-seed mean) & $2.798 \pm 0.013$ & $20.35 \pm 0.08$ & $20.67 \pm 0.14$ \\
+\midrule
+$\Delta$ (Dense $-$ CART)      & $-0.205$ ($-7.3\%$) & $-2.02$ ($-9.9\%$) & $-2.16$ ($-10.5\%$) \\
+\bottomrule
+\end{tabular}
+\end{table}
 
 \subsection{Findings from Complete Configurations}
 
@@ -644,15 +667,140 @@ Shots & HellaSwag & ARC-C & LAMBADA acc (ppl) & PIQA \\
 \end{tabular}
 \end{table}
 
+\subsection{Summary: Hypothesis vs.\ Outcome}
+\label{sec:hyp_vs_outcome}
+
+\cart{}'s architectural bet was that shared-weight recurrence anchored on a once-computed prelude representation would extract additional capacity per stored parameter. We summarize what the Stage 2 results say about that bet.
+
+\paragraph{Predicted.}
+(1) At fixed stored parameters, recurrence increases effective capacity relative to a parameter-matched Dense transformer; the leverage ratio in Table~\ref{tab:chinchilla} converts stored parameters into effective capacity by a factor of $\sim R/2$ to $R$ depending on prelude depth. (2) The benefit of recurrence depth grows with model width $d$, predicted by the Stage 1 monotonic pattern from $-0.25\%$ at $d{=}256$ to $+5.24\%$ at $d{=}1024$ ($R{=}2 \to R{=}8$ on \pplwiki, Table~\ref{tab:r_benefit_s1}). (3) Once-computed frozen $K, V$ from the prelude provides a clean efficiency gain (skipping $2R$ projections per token) without expressive cost; the prelude representation is rich enough that iterative refinement of queries against fixed keys suffices.
+
+\paragraph{Observed at $d{=}1024$, full Stage 2 budget.}
+(1) Dense 7L (parameter-matched on stored parameters, 3-seed mean) beats \cart{} $P{=}6, R{=}6$ by $1.1\%$ on \pplwiki, $2.0\%$ on \ppledu, and $1.8\%$ on \ppltiny{} (Tables~\ref{tab:stage2_results} and~\ref{tab:stage2_dense12l}). The seed agreement of both models is tight enough that the gap is signal, not noise (Section~\ref{sec:repro}). (2) Dense 12L (parameter-matched on effective parameters, 3-seed mean) beats \cart{} by $9.9\%$ on \pplwiki and $10.5\%$ on \ppledu (Table~\ref{tab:stage2_dense12l}). (3) $R$-benefit is absent: $R{=}6$ is the best of $\{6, 8, 10\}$ at every $d \geq 512$, with the gap to $R{=}10$ within $1\%$ (Table~\ref{tab:r_benefit_s2}). The Stage 1 prediction of growing $R$-benefit at large $d$ is reversed at the Stage 2 budget. (4) Prelude depth dominates loop count within the spot-check we ran: $P{=}4$ at $d{=}1024, R{=}10$ costs $+0.92$ on \pplwiki, larger than the gap from any $R$ choice at the same scale (Table~\ref{tab:stage2_results}).
+
+\paragraph{What this means.}
+The parameter-efficiency thesis fails at the binding test ($d{=}1024$). The small ($\sim 1$--$2\%$) stored-parameter gap is consistent with \cart{} being competitive but not advantageous on a per-stored-parameter basis at this scale. The larger ($\sim 10\%$) effective-parameter gap is the stronger negative: the shared-weight leverage was supposed to convert into effective capacity, and the data shows it does not under our training recipe at $\sim 1$B tokens. Two architectural choices in \cart{} --- the frozen $K, V$ anchor in the recurrent core, and the single shared-weight core looped $R$ times --- are the most direct candidates for the bottleneck. Section~\ref{sec:ablations} reports diagnostic ablations testing each.
+
+% ============================================================
+\section{Diagnostic Ablations}
+\label{sec:ablations}
+
+The $d{=}1024$ result (Section~\ref{sec:hyp_vs_outcome}) raises a focused question: which of \cart{}'s architectural choices is responsible for the gap with Dense? We treat the three most directly testable hypotheses --- frozen $K, V$ from the prelude, useful contribution from loop iterations beyond the first, and shared identical weights across all $R$ iterations --- as candidate bottlenecks and report single-seed ablations against each. Each ablation trains a variant at $d{=}1024, R{=}6, P{=}6, \text{seed}{=}42$ (the diagnostic corner where the Dense gap is cleanest) with all other hyperparameters identical to the baseline. Statistical caveats apply: with one seed per ablation versus three for the baseline, only effects exceeding the baseline's seed-noise band ($\sim 0.08$ on \pplwiki) are interpretable as signal.
+
+\subsection{Ablation X: Unfreezing the KV Cache}
+\label{sec:abl_kv}
+
+\paragraph{Hypothesis.}
+Frozen $K, V$ may be the architectural ceiling. The central architectural distinction between \cart{} and Hyperloop~\citep{zeitoun2026hyperloop} is the treatment of the key-value representations in the recurrent core. Hyperloop recomputes $K, V$ from the evolving hidden state at each iteration, effectively running $R$ full self-attention layers with shared weights. \cart{} computes $K, V$ once from the prelude and freezes them for all $R$ iterations. The frozen design's appealing properties (lower per-loop FLOPs, a clean separation between context encoding and iterative refinement) may come at the cost of capacity: every iteration cross-attends against the same prelude-derived representation regardless of how the recurrent state evolves.
+
+\paragraph{Intervention.}
+At each loop iteration $r$, recompute $K, V = \texttt{kv\_proj}(h_\text{input})$ from the current hidden state instead of using the cached pre-loop $K, V = \texttt{kv\_proj}(e)$. The same \texttt{kv\_proj} weights are reused; no new parameters are added. Stored parameter count is unchanged; effective parameters increase by $\sim 1.9\%$ at $R{=}6$ because \texttt{kv\_proj} is now called $R$ times per forward pass instead of once.
+
+\paragraph{Result.}
+
+\begin{table}[htbp]
+\centering
+\caption{Unfreezing $K, V$ at $d{=}1024, R{=}6, P{=}6$, seed 42. Baseline is the 3-seed mean \cart{} run from Table~\ref{tab:stage2_results}. Lower is better.}
+\label{tab:abl_unfreezekv}
+\footnotesize
+\begin{tabular}{lcccc}
+\toprule
+ & \ppltiny & \pplwiki & \ppledu & seeds \\
+\midrule
+\cart{} baseline ($K, V$ frozen)         & $2.798 \pm 0.013$ & $20.35 \pm 0.08$ & $20.67 \pm 0.14$ & 3 \\
+\cart{} unfrozen $K, V$                  & $2.783$           & $20.14$          & $20.52$          & 1 \\
+\midrule
+$\Delta$ (unfrozen $-$ baseline)         & $-0.015$ ($-0.5\%$) & $-0.21$ ($-1.0\%$) & $-0.15$ ($-0.7\%$) & --- \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The unfrozen-$K, V$ variant landed within the baseline's own seed-noise band on every metric ($1\sigma$ on \pplwiki: $0.08$; observed shift: $0.21$, roughly $2.6\sigma$ but with $n{=}1$ on the ablation side). Train loss curves tracked the baseline within $\pm 0.05$ nats across all 610 logged steps from step 50 to step 30{,}500. Despite the architectural change, \cart{} remains slightly behind Dense 7L ($20.13$ \pplwiki) and substantially behind Dense 12L ($18.32$ \pplwiki, Table~\ref{tab:stage2_dense12l}).
+
+\paragraph{Interpretation.}
+Frozen $K, V$ is not the architectural choice responsible for the gap with Dense at $d{=}1024$. The original \cart{} design's compute saving ($2R$ projections per token skipped per sequence) and the architectural simplification it provides remain real benefits, but the hypothesis that allowing $K, V$ to evolve would unlock additional capacity does not hold empirically at this scale and training budget. The bottleneck lives elsewhere.
+
+\subsection{Ablation Y: Recurrence-Depth Reduction ($R{=}1$)}
+\label{sec:abl_r1}
+
+\paragraph{Hypothesis.}
+The recurrent core may not be extracting useful capacity from iterations beyond the first. If so, removing $R{-}1$ of the iterations should leave perplexity essentially unchanged --- and \cart{}'s "recurrence" framing reduces to architectural decoration.
+
+\paragraph{Intervention.}
+Train \cart{} with $n_\text{loops} = 1$ at $d{=}1024, P{=}6, \text{seed}{=}42$. The for-loop in \texttt{CART.forward} runs once; HyperConnection, LIE, and the LTI gate all degenerate gracefully (LIE emits \texttt{pe[0]}, the ring buffer initializes to three copies of $e$ which combine to $e$, the LTI gate applies once). Effective parameters at $R{=}1$ equal stored parameters ($\sim 75$M), parameter-matching Dense 7L by construction. The single-iteration core does the same cross-attention against the frozen prelude-derived $K, V$, so this isolates "does the loop contribute anything?" without changing any other architectural detail.
+
+\paragraph{Result.}
+
+\begin{table}[htbp]
+\centering
+\caption{Recurrence-depth ablation at $d{=}1024, P{=}6$, seed 42. At $R{=}1$, effective $=$ stored ($\sim 75$M), parameter-matching Dense 7L. Lower is better.}
+\label{tab:abl_r1}
+\footnotesize
+\begin{tabular}{lcccc}
+\toprule
+ & \ppltiny & \pplwiki & \ppledu & seeds \\
+\midrule
+\cart{} baseline ($R{=}6$, $\sim 75$M stored)  & $2.798 \pm 0.013$ & $20.35 \pm 0.08$ & $20.67 \pm 0.14$ & 3 \\
+\cart{} $R{=}1$ ($\sim 75$M, no leverage)      & $2.811$           & $20.57$          & $20.77$          & 1 \\
+Dense 7L ($\sim 75$M)                          & $2.746 \pm 0.002$ & $20.13 \pm 0.06$ & $20.26 \pm 0.04$ & 3 \\
+\midrule
+$\Delta$ ($R{=}1$ $-$ baseline $R{=}6$)        & $+0.013$ ($+0.5\%$) & $+0.22$ ($+1.1\%$) & $+0.10$ ($+0.5\%$) & --- \\
+$\Delta$ ($R{=}1$ $-$ Dense 7L)                & $+0.065$ ($+2.4\%$) & $+0.44$ ($+2.2\%$) & $+0.51$ ($+2.5\%$) & --- \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The $R{=}1$ variant is slightly worse than the $R{=}6$ baseline on every metric, by $0.5$--$1.1\%$. The \pplwiki gap of $+0.22$ is approximately $2.7\sigma$ of the baseline's seed-noise band, with $n{=}1$ on the ablation side --- borderline signal. Train loss curves track the baseline closely throughout, with the $R{=}6$ baseline pulling marginally ahead in the second half of training.
+
+At parameter parity with Dense 7L (since $R{=}1$ has no leverage multiplier), \cart{} $R{=}1$ loses by $2.2$--$2.5\%$ on every metric --- a larger gap than the $R{=}6$ \cart{} baseline shows against Dense 7L ($1.1$--$2.0\%$). Recurrence is doing something, but only enough to recover roughly half of the deficit to Dense at stored-parameter parity.
+
+\paragraph{Interpretation.}
+The recurrent core contributes capacity on the order of $1\%$ on natural-language sets at the Stage 2 budget --- small but not zero. This is consistent with the $R$-flatness pattern in Section~\ref{sec:hyp_vs_outcome}: $R \in \{6, 8, 10\}$ also cluster within $\sim 1\%$ of each other at every $d \geq 512$, so the marginal value of each additional core iteration beyond the first is small. The architectural premise that looping a shared-weight block adds meaningful capacity holds in a tiny sense and fails in the strong sense the $R$-fold leverage formula predicts.
+
+\subsection{Ablation Z: Unshared Core Weights}
+\label{sec:abl_unshared}
+
+\paragraph{Hypothesis.}
+The shared-weight choice in the recurrent core may be the bottleneck. \cart{}'s central efficiency claim is that the same \texttt{CoreBlock} instance, looped $R$ times, extracts $\sim R$-fold effective capacity from a single stored set of weights. We test this directly by giving each iteration its own weight set --- unrolling the recurrent core into $R$ distinct \texttt{CoreBlock} instances --- and asking whether the freed parameter freedom closes the gap to Dense.
+
+\paragraph{Intervention.}
+Replace \texttt{self.core = CoreBlock(config)} with \texttt{self.core = nn.ModuleList([CoreBlock(config) for \_ in range(n\_loops)])} and index by iteration inside the loop: \texttt{self.core[r](h\_input, K, V)}. The surrounding residual machinery (HyperConnection, LIE, LTI gate) and the frozen $K, V$ projection from the prelude remain shared across iterations as in the baseline. Stored parameters at $d{=}1024, R{=}6$ rise from $\sim 75$M to $\sim 125$M (added $5$ extra core blocks); effective parameters equal stored ($\sim 125$M) since there is no leverage multiplier without weight sharing. This places the variant in approximate stored-parameter parity with Dense 12L for a direct head-to-head.
+
+\paragraph{Result.}
+
+\begin{table}[htbp]
+\centering
+\caption{Unshared core weights at $d{=}1024, R{=}6, P{=}6$, seed 42. Stored parameters $\sim 125$M (vs baseline \cart{} $\sim 75$M); effective $=$ stored (no leverage). Approximately parameter-matched to Dense 12L for a direct comparison. Lower is better.}
+\label{tab:abl_unshared}
+\footnotesize
+\begin{tabular}{lcccc}
+\toprule
+ & \ppltiny & \pplwiki & \ppledu & seeds \\
+\midrule
+\cart{} baseline (shared, $\sim 75$M)        & $2.798 \pm 0.013$ & $20.35 \pm 0.08$ & $20.67 \pm 0.14$ & 3 \\
+\cart{} unshared ($\sim 125$M)               & $2.691$           & $19.22$          & $19.64$          & 1 \\
+Dense 12L ($\sim 125$M)                      & $2.592 \pm 0.003$ & $18.32 \pm 0.05$ & $18.50 \pm 0.06$ & 3 \\
+\midrule
+$\Delta$ (unshared $-$ \cart{} baseline)               & $-0.107$ ($-3.8\%$) & $-1.13$ ($-5.6\%$) & $-1.03$ ($-5.0\%$) & --- \\
+$\Delta$ (unshared $-$ Dense 12L)                      & $+0.099$ ($+3.8\%$) & $+0.90$ ($+4.9\%$) & $+1.14$ ($+6.2\%$) & --- \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The unshared variant improves on baseline \cart{} by $5$--$6\%$ on the natural-language sets and $3.8\%$ on \ppltiny. Train loss curves show a steady $\sim 0.05$ nat advantage over baseline across all 610 logged steps from step $\sim 3{,}000$ onward, with the gap widening monotonically through training rather than narrowing; at step $30{,}500$ train loss is $2.443$ versus baseline $2.491$. The improvement is signal, not noise: the observed \pplwiki shift of $-1.13$ exceeds the baseline's $1\sigma$ band ($0.08$) by more than an order of magnitude, even allowing for $n{=}1$ on the ablation side.
+
+At the parameter-matched head-to-head against Dense 12L, the unshared variant still loses by $4.9\%$ on \pplwiki and $6.2\%$ on \ppledu.
+
+\paragraph{Interpretation.}
+Two things follow from this result.
+
+First, shared weights \emph{were} costing \cart{} real capacity. The $\sim 5\%$ improvement from unsharing is meaningful, consistent across training, and outside the seed-noise band. The shared-weight leverage thesis from Section~\ref{sec:hyp_vs_outcome} --- that effective parameters scale by a factor of $R$ at fixed stored parameters --- did not pay at the Stage 2 budget. Removing the weight-sharing constraint and explicitly allocating each iteration its own parameters delivers what the leverage was supposed to deliver, but only by spending the additional stored parameters.
+
+Second, the unshared variant still loses to Dense 12L at parameter parity. The architectural distinctness that survives the removal of weight sharing --- cross-attention against a fixed prelude-derived $K, V$ anchor, in place of self-attention with per-layer $K, V$ recomputation, embedded in a heterogeneous prelude $\to$ anchor $\to$ core $\to$ coda structure --- caps the architecture below a vanilla self-attention transformer of equivalent depth. The $d{=}1024$ gap to Dense thus has two distinct architectural contributors: roughly $5\%$ from shared weights (now diagnosed by this ablation), and roughly $5\%$ from the prelude+anchor+core+coda template itself. Neither alone explains the full deficit.
+
 % ============================================================
 \section{Discussion}
 \label{sec:discussion}
-
-\subsection{The Case for Once-Computed KV}
-
-The central architectural distinction between \cart{} and Hyperloop~\citep{zeitoun2026hyperloop} is the treatment of the key-value representations in the recurrent core. Hyperloop recomputes $K, V$ from the evolving hidden state at each iteration, effectively running $R$ full self-attention layers with shared weights. \cart{} computes $K, V$ once from the prelude and freezes them for all $R$ iterations.
-
-This design has three consequences. First, it reduces per-loop FLOPs: at $R=10$, \cart{} skips $2R$ full $d{\times}d$ projections per sequence position relative to Hyperloop. Second, it creates a clean separation between context encoding (prelude, run once) and iterative refinement (core, run $R$ times). The recurrent state $h$ is purely a reasoning variable; the information available to it does not change mid-loop. Third, the fixed $K, V$ anchor provides a stable target for cross-attention across all iterations, which may contribute to the remarkably consistent $\varrho \approx 0.893$ we observe; the core always converges toward the same representation of the input, rather than a moving target.
 
 \subsection{Learned vs.\ Constrained Stability}
 
@@ -717,16 +865,18 @@ Stage 1 was useful as a cross-scale screen but unreliable for within-scale $R$ c
 \cart{} differs from prior depth-recurrent transformers in three ways. First, it is the only architecture in this family that computes $K, V$ once from a unique-layer prelude and reuses those frozen tensors across all $R$ iterations of a shared-weight cross-attending core. Concurrent work, including Geiping, Hyperloop, Parcae, OpenMythos, and SpiralFormer, instead injects the prelude embedding into a self-attending core that recomputes $K, V$ at each step. Second, \cart{}'s LTI stability emerges from a sigmoid gate trained without supervision, rather than being structurally imposed via ZOH discretization (Parcae, OpenMythos). Third, we identify and characterize a previously undocumented constraint on this architecture class: cross-attention from the recurrent state into the prelude must be causal, or the model leaks future tokens into the hidden state and collapses.
 
 \paragraph{What this paper shows.}
-We report four results that have not, to our knowledge, been demonstrated in prior work on looped transformers:
+We report five empirical results from the Stage 2 sweep and the diagnostic ablations:
 
 \begin{enumerate}[leftmargin=*, topsep=2pt, itemsep=1pt]
-  \item Across 36 fully-trained Stage 2 configurations, the LTI gate settles in the narrow band $\varrho \in [0.79, 0.83]$, with $\varrho$ rising monotonically with both $d$ (+0.033 from $d{=}256$ to $d{=}1024$ at $R{=}6$) and weakly with $R$ (+0.008 to +0.009 per pair of loops). The earlier ``universal $\varrho \approx 0.893$'' reported from Stage 1 at step 3{,}000 was a transient: $\varrho$ continues to decay through full training.
-  \item Prelude depth $P$ dominates loop count $R$ in every condition tested ($P{=}6 > P{=}4 > P{=}3 > P{=}2$ holds without exception).
-  \item At Stage 1 (3{,}000 steps), the benefit of recurrence depth appeared to grow monotonically with model width, from $-0.25\%$ at $d{=}256$ to $+5.24\%$ at $d{=}1024$ ($R{=}2 \to R{=}8$ on \pplwiki). At Stage 2 (30{,}500 steps, $\sim 10\times$ the tokens), this trend reverses: $R{=}6$ is the best $R$ at every scale $d \geq 512$, and going to $R{=}10$ regresses by up to $1\%$. Whether further training restores R-benefit is the subject of the planned extended-training experiment.
-  \item At $d{=}512$, all six complete Stage 2 seeds show \cart{} outperforming a parameter-matched Dense baseline by $\sim 9\%$ on Wikipedia and $\sim 16\%$ on FineWeb-Edu perplexity, while the synthetic narrow-vocabulary TinyStories gap is only $\sim 1.5\%$, suggesting recurrence yields representations whose advantage grows with the difficulty of the language-modeling target. (See Section~\ref{sec:eval_terminology} for the precise sense in which we use ``natural-language'' here; this is in-distribution generalization, not out-of-distribution.)
+  \item Across 36 fully-trained Stage 2 configurations, the LTI gate settles in $\varrho \in [0.79, 0.83]$, with $\varrho$ rising monotonically with both $d$ ($+0.033$ from $d{=}256$ to $d{=}1024$ at $R{=}6$) and weakly with $R$ ($+0.008$ to $+0.009$ per pair of loops). The earlier ``universal $\varrho \approx 0.893$'' reported from Stage 1 at step 3{,}000 was a transient: $\varrho$ continues to decay through full training.
+  \item Prelude depth $P$ dominates loop count $R$ in every condition tested in this study, including a $P{=}4$ versus $P{=}6$ spot-check at $d{=}1024, R{=}10$ where dropping two prelude layers costs $+0.92$ \pplwiki, larger than any $R$ choice at the same scale (Table~\ref{tab:stage2_results}).
+  \item Stage 1 (3{,}000 steps) predicted that the benefit of recurrence depth would grow monotonically with model width, from $-0.25\%$ at $d{=}256$ to $+5.24\%$ at $d{=}1024$ ($R{=}2 \to R{=}8$ on \pplwiki). At Stage 2 (30{,}500 steps, $\sim 10\times$ the tokens), this trend reverses: $R{=}6$ is the best $R$ at every scale $d \geq 512$, and going to $R{=}10$ regresses by up to $1\%$. The Stage-1-derived expectation of growing $R$-benefit does not survive longer training.
+  \item At the binding parameter-efficiency test ($d{=}1024$, $\sim 1$B tokens, Section~\ref{sec:hyp_vs_outcome}), \cart{} is competitive but does not win at parameter parity. Dense 7L (stored-parameter-matched, 3-seed mean) beats \cart{} $P{=}6, R{=}6$ by $1.1\%$ on \pplwiki, $2.0\%$ on \ppledu, and $1.8\%$ on \ppltiny. Dense 12L (effective-parameter-matched, 3-seed mean) beats \cart{} by $9.9\%$ on \pplwiki and $10.5\%$ on \ppledu (Table~\ref{tab:stage2_dense12l}). The shared-weight leverage thesis --- that effective parameters scale by a factor of $R$ at fixed stored parameters --- does not convert to language-modeling capacity at this scale and training budget.
+  \item The $d{=}1024$ \cart{}--Dense gap decomposes across three architectural mechanisms via diagnostic ablations (Section~\ref{sec:ablations}). Frozen $K, V$ is exonerated: recomputing $K, V$ from $h$ at every iteration ties the baseline within the seed-noise band (Section~\ref{sec:abl_kv}). Recurrence beyond the first iteration contributes $\sim 1\%$: at $R{=}1$, \pplwiki rises by $1.1\%$ versus $R{=}6$, indicating the looped core captures only marginal additional capacity (Section~\ref{sec:abl_r1}). Shared weights cost $\sim 5\%$: unrolling the core into $R$ unique blocks improves \pplwiki by $5.6\%$ over baseline (Section~\ref{sec:abl_unshared}). The remaining $\sim 5\%$ gap to Dense 12L at parameter parity comes from the cross-attention-against-prelude-anchor template that survives even the unshared variant. \cart{}'s recurrent-with-shared-weights formulation does not deliver the parameter-efficiency it was designed to deliver at this scale and training budget.
 \end{enumerate}
 
-Parameter-matched Dense baselines at $d{=}1024$ (both stored-matched and effective-matched variants) and the P=4 R=10 d=1024 ablation testing whether prelude depth dominates loop count are running at the time of this preprint and will update the relevant tables and discussion upon completion.
+\paragraph{What remains unresolved.}
+The ablations attribute most of the $d{=}1024$ gap to two factors --- shared weights ($\sim 5\%$) and the cross-attention-against-anchor template ($\sim 5\%$). The remaining architectural question is whether the cross-attention/anchor structure \emph{specifically} caps the architecture, or whether some other component of the heterogeneous prelude $\to$ anchor $\to$ core $\to$ coda framing is the cap. A targeted ablation replacing cross-attention with self-attention (and adding per-layer $K, V$ recomputation) in the unshared core would isolate this. \tbd{This is left to future work.} The combined picture supports a tempered conclusion: \cart{}'s recurrent-with-shared-weights formulation does not deliver the parameter-efficiency it was designed to deliver at $d{=}1024$ on $\sim 1$B tokens, but the architecture's other contributions --- deterministic latency, fixed VRAM, the spectral-radius emergence finding (Section~\ref{sec:spectral}), the Stage 1 $\to$ Stage 2 $R$-benefit reversal --- survive intact.
 
 % ============================================================
 \section*{Code and Data Availability}

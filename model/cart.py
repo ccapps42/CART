@@ -56,8 +56,15 @@ class CART(nn.Module):
         # KV projection: computes K, V from e once before the loop
         self.kv_proj = MLAKVProjection(config)
 
-        # Core: one shared-weight block, looped R times
-        self.core = CoreBlock(config)
+        # Core: one shared-weight block looped R times, OR R unique blocks
+        # when unshare_core=True (ablation Z — tests whether shared weights are
+        # the bottleneck for parameter-efficiency vs. Dense).
+        if config.unshare_core:
+            self.core = nn.ModuleList(
+                [CoreBlock(config) for _ in range(config.n_loops)]
+            )
+        else:
+            self.core = CoreBlock(config)
 
         # Hyper-connections
         self.hyper = HyperConnection(config)
@@ -106,7 +113,9 @@ class CART(nn.Module):
         e = x                              # [B, T, d_model] — fixed context
 
         # 3. Pre-compute K, V from prelude output (reused across all loops)
-        K, V = self.kv_proj(e)             # [B, H, T, D] each
+        #    Skipped when unfreeze_kv=True — K, V are recomputed from h each iter.
+        if not self.config.unfreeze_kv:
+            K, V = self.kv_proj(e)         # [B, H, T, D] each
 
         # 4. Initialize hidden state and hyper-connection buffer
         h = e                              # Start from prelude output
@@ -116,13 +125,16 @@ class CART(nn.Module):
         for r in range(self.config.n_loops):
             h_input = self.hyper.combine(buffer)   # blend previous states
             h_input = self.lie(h_input, r)         # inject loop-depth signal
+            if self.config.unfreeze_kv:
+                K, V = self.kv_proj(h_input)       # recompute from current state
+            core_block = self.core[r] if self.config.unshare_core else self.core
             if self._use_grad_ckpt and self.training:
                 # Checkpoint the core block to trade VRAM for recomputation.
                 # LIE and LTI stay outside — only the heavy cross-attn+FFN is wrapped.
                 transformer_out = ckpt_util.checkpoint(
-                    self.core, h_input, K, V, use_reentrant=False)
+                    core_block, h_input, K, V, use_reentrant=False)
             else:
-                transformer_out = self.core(h_input, K, V)
+                transformer_out = core_block(h_input, K, V)
             h = self.lti(h_input, transformer_out) # LTI-stable update
             buffer = self.hyper.update_buffer(buffer, h)
 
@@ -150,11 +162,18 @@ class CART(nn.Module):
     def count_parameters(self) -> dict:
         """Returns total and effective parameter counts."""
         total = sum(p.numel() for p in self.parameters())
-        # Effective: count core parameters R times
-        core_params = sum(p.numel() for p in self.core.parameters())
         kv_proj_params = sum(p.numel() for p in self.kv_proj.parameters())
-        # KV proj is paid once (not R times) due to KV reuse
-        effective = total + (self.config.n_loops - 1) * core_params
+        all_core_params = sum(p.numel() for p in self.core.parameters())
+        if self.config.unshare_core:
+            # All R blocks already counted in `total`; no leverage multiplier.
+            core_params = all_core_params // self.config.n_loops  # per-block
+            effective = total
+        else:
+            # Single shared block; effective counts it R times. KV proj counts
+            # once when frozen, R times when unfrozen.
+            core_params = all_core_params
+            per_iter = core_params + (kv_proj_params if self.config.unfreeze_kv else 0)
+            effective = total + (self.config.n_loops - 1) * per_iter
         return {
             "total": total,
             "effective": effective,

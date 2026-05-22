@@ -200,6 +200,12 @@ def main():
                         help="Override training .bin path (for testing only)")
     parser.add_argument("--val-dir", default=None,
                         help="Override val/ directory (for testing only)")
+    parser.add_argument("--unfreeze-kv", action="store_true",
+                        help="Ablation: recompute K, V from current h each iteration "
+                             "(otherwise frozen from prelude output e).")
+    parser.add_argument("--unshare-core", action="store_true",
+                        help="Ablation: use n_loops unique CoreBlocks instead of "
+                             "one shared block looped n_loops times.")
     args = parser.parse_args()
 
     seq_len = args.seq_len if args.seq_len else SEQ_LEN
@@ -228,8 +234,14 @@ def main():
             d_model=row["d_model"],
             n_loops=row["n_loops"],
             n_prelude=row["n_prelude"],
+            unfreeze_kv=args.unfreeze_kv,
+            unshare_core=args.unshare_core,
         )
         cfg.validate()
+        if args.unfreeze_kv:
+            print("Ablation mode: unfreeze_kv=True (K, V recomputed from h each loop)")
+        if args.unshare_core:
+            print(f"Ablation mode: unshare_core=True ({cfg.n_loops} unique CoreBlocks)")
 
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         if device.type == "cuda":

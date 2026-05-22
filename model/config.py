@@ -42,6 +42,22 @@ class CARTConfig:
     # --- Training ---
     dropout: float = 0.0        # No dropout for sweep runs
 
+    # --- Ablation: unfreeze KV ---
+    # When True, K and V are recomputed from the current hidden state h
+    # at every core iteration (using the same kv_proj weights), instead of
+    # being computed once from the prelude output e and frozen across the loop.
+    # Diagnostic for whether the frozen-KV efficiency trick is the architectural
+    # ceiling vs. recurrence/shared-weights being the bottleneck.
+    unfreeze_kv: bool = False
+
+    # --- Ablation: unshared core weights ---
+    # When True, the recurrent core is replaced with n_loops unique CoreBlocks
+    # (each iteration uses its own weight set) instead of a single shared block
+    # looped n_loops times. Tests whether shared-weight leverage was costing
+    # capacity vs being a feature. Stored parameters grow by ~(n_loops - 1) *
+    # core_params; effective parameters equal stored (no leverage multiplier).
+    unshare_core: bool = False
+
     @property
     def n_heads(self) -> int:
         assert self.d_model % self.d_head == 0, \
@@ -60,6 +76,6 @@ class CARTConfig:
 
     def validate(self):
         assert self.d_model % 64 == 0, "d_model must be divisible by 64"
-        assert self.n_loops >= 2, "n_loops must be at least 2"
+        assert self.n_loops >= 1, "n_loops must be at least 1 (R=1 is the no-recurrence diagnostic)"
         assert self.n_prelude >= 2, "n_prelude must be at least 2"
         assert self.n_coda == 1, "n_coda must be 1 (fixed)"
