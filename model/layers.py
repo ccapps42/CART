@@ -67,6 +67,31 @@ class CoreBlock(nn.Module):
         return h
 
 
+class CoreBlockSelfAttn(nn.Module):
+    """
+    Variant of CoreBlock that uses MLA self-attention on h instead of
+    cross-attention against the prelude's K, V. Structurally identical
+    to PreludeLayer — used as the recurrent core when self_attn_core=True
+    to test whether the cross-attention-against-anchor template (and not
+    just weight sharing) was capping the architecture.
+
+    Adds ~kv_down + k_up + v_up parameters per block vs CoreBlock, since
+    K, V are now produced inside the block from h rather than passed in
+    from the prelude's kv_proj.
+    """
+    def __init__(self, config: CARTConfig):
+        super().__init__()
+        self.norm1 = RMSNorm(config.d_model, config.rms_norm_eps)
+        self.attn  = MLASelfAttention(config)
+        self.norm2 = RMSNorm(config.d_model, config.rms_norm_eps)
+        self.ffn   = SwiGLUFFN(config)
+
+    def forward(self, h: torch.Tensor) -> torch.Tensor:
+        h = h + self.attn(self.norm1(h))
+        h = h + self.ffn(self.norm2(h))
+        return h
+
+
 class CodaLayer(nn.Module):
     """
     Single output transformation layer with unique weights.

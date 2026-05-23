@@ -58,6 +58,35 @@ class CARTConfig:
     # core_params; effective parameters equal stored (no leverage multiplier).
     unshare_core: bool = False
 
+    # --- Ablation: self-attention core ---
+    # When True, the recurrent core uses MLA self-attention on h (with RoPE)
+    # instead of cross-attention against frozen K, V from the prelude. The
+    # prelude's kv_proj module is skipped entirely. Tests whether the cross-
+    # attention-against-anchor template (and not just shared weights) was
+    # capping the architecture below a vanilla transformer of equivalent depth.
+    # Typically combined with unshare_core=True for a clean comparison vs Dense.
+    # Mutually exclusive with unfreeze_kv (no K, V cache exists).
+    self_attn_core: bool = False
+
+    # --- Ablation: disable HyperConnection ---
+    # When True, the recurrent core skips HyperConnection's weighted blend of
+    # prior hidden states; each iteration reads the most recent state directly
+    # (h_input = buffer[0], equivalent to standard residual recurrence). The
+    # HyperConnection module is still instantiated but its combine() call is
+    # bypassed. Tests whether HyperConnection's per-iteration cross-state
+    # blending earns its keep in CART's native (shared-weight) configuration.
+    disable_hyper: bool = False
+
+    # --- Ablation: disable LTI gate ---
+    # When True, the LTI gate is bypassed: h = h_input + transformer_out
+    # (standard residual) instead of h = sigmoid(a) * h_input + transformer_out.
+    # The LTI module is still instantiated (so spectral_radius() logging
+    # still functions) but its parameters are unused at forward time. Tests
+    # whether the sigmoid-bounded gate's stability constraint, designed for
+    # R -> infinity convergence guarantees, is restricting residual flow at
+    # the fixed R = 6 we actually train with.
+    disable_lti: bool = False
+
     @property
     def n_heads(self) -> int:
         assert self.d_model % self.d_head == 0, \
@@ -79,3 +108,5 @@ class CARTConfig:
         assert self.n_loops >= 1, "n_loops must be at least 1 (R=1 is the no-recurrence diagnostic)"
         assert self.n_prelude >= 2, "n_prelude must be at least 2"
         assert self.n_coda == 1, "n_coda must be 1 (fixed)"
+        assert not (self.self_attn_core and self.unfreeze_kv), \
+            "self_attn_core=True makes unfreeze_kv meaningless (no K, V cache exists)"

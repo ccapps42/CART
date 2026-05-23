@@ -4,7 +4,7 @@ import torch.utils.checkpoint as ckpt_util
 from .config import CARTConfig
 from .norm import RMSNorm
 from .attention import MLAKVProjection
-from .layers import PreludeLayer, CoreBlock, CodaLayer
+from .layers import PreludeLayer, CoreBlock, CoreBlockSelfAttn, CodaLayer
 from .hyper import HyperConnection
 from .lti import LTIInjection
 from .lie import LoopIndexEmbedding
@@ -53,18 +53,23 @@ class CART(nn.Module):
             PreludeLayer(config) for _ in range(config.n_prelude)
         ])
 
-        # KV projection: computes K, V from e once before the loop
-        self.kv_proj = MLAKVProjection(config)
+        # KV projection: computes K, V from e once before the loop.
+        # Skipped when self_attn_core=True (core uses self-attention, no anchor).
+        self.kv_proj = None if config.self_attn_core else MLAKVProjection(config)
 
-        # Core: one shared-weight block looped R times, OR R unique blocks
-        # when unshare_core=True (ablation Z — tests whether shared weights are
-        # the bottleneck for parameter-efficiency vs. Dense).
+        # Core block class depends on self_attn_core flag.
+        # CoreBlock: cross-attention against external K, V (CART default).
+        # CoreBlockSelfAttn: self-attention on h with RoPE (ablation W).
+        block_cls = CoreBlockSelfAttn if config.self_attn_core else CoreBlock
+
+        # Core: one shared block looped R times, OR R unique blocks
+        # when unshare_core=True (ablation Z).
         if config.unshare_core:
             self.core = nn.ModuleList(
-                [CoreBlock(config) for _ in range(config.n_loops)]
+                [block_cls(config) for _ in range(config.n_loops)]
             )
         else:
-            self.core = CoreBlock(config)
+            self.core = block_cls(config)
 
         # Hyper-connections
         self.hyper = HyperConnection(config)
@@ -113,8 +118,9 @@ class CART(nn.Module):
         e = x                              # [B, T, d_model] — fixed context
 
         # 3. Pre-compute K, V from prelude output (reused across all loops)
-        #    Skipped when unfreeze_kv=True — K, V are recomputed from h each iter.
-        if not self.config.unfreeze_kv:
+        #    Skipped when unfreeze_kv=True (recompute per iter) or
+        #    self_attn_core=True (core does self-attention, no K/V anchor).
+        if not self.config.self_attn_core and not self.config.unfreeze_kv:
             K, V = self.kv_proj(e)         # [B, H, T, D] each
 
         # 4. Initialize hidden state and hyper-connection buffer
@@ -123,19 +129,35 @@ class CART(nn.Module):
 
         # 5. Recurrent loop
         for r in range(self.config.n_loops):
-            h_input = self.hyper.combine(buffer)   # blend previous states
+            # Read prior state. HyperConnection blends last 3 by default;
+            # disable_hyper=True falls back to standard residual (most recent only).
+            if self.config.disable_hyper:
+                h_input = buffer[0]
+            else:
+                h_input = self.hyper.combine(buffer)
             h_input = self.lie(h_input, r)         # inject loop-depth signal
             if self.config.unfreeze_kv:
                 K, V = self.kv_proj(h_input)       # recompute from current state
             core_block = self.core[r] if self.config.unshare_core else self.core
-            if self._use_grad_ckpt and self.training:
-                # Checkpoint the core block to trade VRAM for recomputation.
-                # LIE and LTI stay outside — only the heavy cross-attn+FFN is wrapped.
-                transformer_out = ckpt_util.checkpoint(
-                    core_block, h_input, K, V, use_reentrant=False)
+            if self.config.self_attn_core:
+                # Core does self-attention on h; no K, V passed in.
+                if self._use_grad_ckpt and self.training:
+                    transformer_out = ckpt_util.checkpoint(
+                        core_block, h_input, use_reentrant=False)
+                else:
+                    transformer_out = core_block(h_input)
             else:
-                transformer_out = core_block(h_input, K, V)
-            h = self.lti(h_input, transformer_out) # LTI-stable update
+                # Core does cross-attention against external K, V.
+                if self._use_grad_ckpt and self.training:
+                    transformer_out = ckpt_util.checkpoint(
+                        core_block, h_input, K, V, use_reentrant=False)
+                else:
+                    transformer_out = core_block(h_input, K, V)
+            # LTI gate (sigmoid-bounded) by default; standard residual when disabled.
+            if self.config.disable_lti:
+                h = h_input + transformer_out
+            else:
+                h = self.lti(h_input, transformer_out)
             buffer = self.hyper.update_buffer(buffer, h)
 
         # 6. Coda
@@ -162,7 +184,8 @@ class CART(nn.Module):
     def count_parameters(self) -> dict:
         """Returns total and effective parameter counts."""
         total = sum(p.numel() for p in self.parameters())
-        kv_proj_params = sum(p.numel() for p in self.kv_proj.parameters())
+        kv_proj_params = (sum(p.numel() for p in self.kv_proj.parameters())
+                          if self.kv_proj is not None else 0)
         all_core_params = sum(p.numel() for p in self.core.parameters())
         if self.config.unshare_core:
             # All R blocks already counted in `total`; no leverage multiplier.

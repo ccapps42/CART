@@ -206,6 +206,17 @@ def main():
     parser.add_argument("--unshare-core", action="store_true",
                         help="Ablation: use n_loops unique CoreBlocks instead of "
                              "one shared block looped n_loops times.")
+    parser.add_argument("--self-attn-core", action="store_true",
+                        help="Ablation: core uses self-attention on h with RoPE "
+                             "instead of cross-attention against frozen K, V from "
+                             "the prelude. Skips kv_proj entirely.")
+    parser.add_argument("--disable-hyper", action="store_true",
+                        help="Ablation: skip HyperConnection's blend of prior "
+                             "hidden states; each iteration reads buffer[0] only "
+                             "(standard residual recurrence).")
+    parser.add_argument("--disable-lti", action="store_true",
+                        help="Ablation: bypass the LTI sigmoid gate; use plain "
+                             "residual h = h_input + transformer_out instead.")
     args = parser.parse_args()
 
     seq_len = args.seq_len if args.seq_len else SEQ_LEN
@@ -236,12 +247,21 @@ def main():
             n_prelude=row["n_prelude"],
             unfreeze_kv=args.unfreeze_kv,
             unshare_core=args.unshare_core,
+            self_attn_core=args.self_attn_core,
+            disable_hyper=args.disable_hyper,
+            disable_lti=args.disable_lti,
         )
         cfg.validate()
         if args.unfreeze_kv:
             print("Ablation mode: unfreeze_kv=True (K, V recomputed from h each loop)")
         if args.unshare_core:
             print(f"Ablation mode: unshare_core=True ({cfg.n_loops} unique CoreBlocks)")
+        if args.self_attn_core:
+            print("Ablation mode: self_attn_core=True (core uses self-attention on h)")
+        if args.disable_hyper:
+            print("Ablation mode: disable_hyper=True (standard residual; no HC blend)")
+        if args.disable_lti:
+            print("Ablation mode: disable_lti=True (plain residual; no sigmoid gate)")
 
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         if device.type == "cuda":
