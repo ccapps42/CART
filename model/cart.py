@@ -135,7 +135,9 @@ class CART(nn.Module):
                 h_input = buffer[0]
             else:
                 h_input = self.hyper.combine(buffer)
-            h_input = self.lie(h_input, r)         # inject loop-depth signal
+            # Loop-index signal (sinusoidal pe[r]); skipped when disable_lie=True.
+            if not self.config.disable_lie:
+                h_input = self.lie(h_input, r)
             if self.config.unfreeze_kv:
                 K, V = self.kv_proj(h_input)       # recompute from current state
             core_block = self.core[r] if self.config.unshare_core else self.core

@@ -87,6 +87,17 @@ class CARTConfig:
     # the fixed R = 6 we actually train with.
     disable_lti: bool = False
 
+    # --- Ablation: disable LIE ---
+    # When True, the Loop Index Embedding is skipped — h_input goes into the
+    # core block without the sinusoidal pe[r] signal added. The LIE module
+    # is still instantiated but its forward call is bypassed. In the shared-
+    # weight case this is the most architecturally consequential machinery
+    # change: LIE is the only mechanism by which the shared block can know
+    # which iteration it is processing. Without it, all R iterations are
+    # functionally identical apart from the evolving h state. Tests whether
+    # the shared block actually uses the loop-index signal for differentiation.
+    disable_lie: bool = False
+
     @property
     def n_heads(self) -> int:
         assert self.d_model % self.d_head == 0, \

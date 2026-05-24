@@ -217,6 +217,9 @@ def main():
     parser.add_argument("--disable-lti", action="store_true",
                         help="Ablation: bypass the LTI sigmoid gate; use plain "
                              "residual h = h_input + transformer_out instead.")
+    parser.add_argument("--disable-lie", action="store_true",
+                        help="Ablation: skip the LIE loop-index signal; "
+                             "h_input goes into the core without pe[r] added.")
     args = parser.parse_args()
 
     seq_len = args.seq_len if args.seq_len else SEQ_LEN
@@ -250,6 +253,7 @@ def main():
             self_attn_core=args.self_attn_core,
             disable_hyper=args.disable_hyper,
             disable_lti=args.disable_lti,
+            disable_lie=args.disable_lie,
         )
         cfg.validate()
         if args.unfreeze_kv:
@@ -262,6 +266,8 @@ def main():
             print("Ablation mode: disable_hyper=True (standard residual; no HC blend)")
         if args.disable_lti:
             print("Ablation mode: disable_lti=True (plain residual; no sigmoid gate)")
+        if args.disable_lie:
+            print("Ablation mode: disable_lie=True (no loop-index signal in h_input)")
 
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         if device.type == "cuda":

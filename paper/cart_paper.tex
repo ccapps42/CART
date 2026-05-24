@@ -872,7 +872,74 @@ HyperConnection is approximately vestigial in \cart{}. The softmax weights almos
 \subsection{Ablation LTI: LTI Gate Strip from Shared Baseline}
 \label{sec:abl_lti}
 
-\tbd{Hypothesis under test: the LTI gate's sigmoid-bounded residual mixing was designed to guarantee stable convergence as $R \to \infty$; at the fixed $R{=}6$ we actually train with, the gate may be over-constraining residual flow. Intervention: set \texttt{disable\_lti=True} so each iteration uses plain residual $h = h_\text{input} + \text{transformer\_out}$ instead of $h = \sigma(a) \odot h_\text{input} + \text{transformer\_out}$. All other CART hyperparameters at baseline (shared core, cross-attention, $R{=}6$). Estimated runtime: $\sim 8.5$ hours.}
+\paragraph{Hypothesis.}
+The LTI gate's sigmoid-bounded residual mixing was designed to guarantee stable convergence as $R \to \infty$. At the fixed $R{=}6$ we actually train with, the gate may be over-constraining residual flow: it imposes a learned forgetting curve on $h_\text{input}$ ($\sigma(a)$ trained to settle in $[0.79, 0.83]$, see Section~\ref{sec:spectral}) that discards information from earlier iterations.
+
+\paragraph{Intervention.}
+Set \texttt{disable\_lti=True}. The LTI module remains instantiated (so \texttt{spectral\_radius()} logging continues to function) but its forward call is bypassed; each iteration uses plain residual $h = h_\text{input} + \text{transformer\_out}$ instead of $h = \sigma(a) \odot h_\text{input} + \text{transformer\_out}$. All other CART hyperparameters at baseline (shared core, cross-attention, $R{=}6$).
+
+\paragraph{Result.}
+
+\begin{table}[htbp]
+\centering
+\caption{LTI gate strip from shared baseline at $d{=}1024, R{=}6, P{=}6$, seed 42. Same-seed comparison cancels seed-to-seed variance. Lower is better.}
+\label{tab:abl_lti}
+\footnotesize
+\begin{tabular}{lcccc}
+\toprule
+ & \ppltiny & \pplwiki & \ppledu & seeds \\
+\midrule
+\cart{} baseline (3-seed mean)                    & $2.798 \pm 0.013$ & $20.35 \pm 0.08$ & $20.67 \pm 0.14$ & 3 \\
+\cart{} baseline (seed 42 only)                   & $2.798$           & $20.45$          & $20.76$          & 1 \\
+\cart{} no LTI gate (seed 42)                     & $2.801$           & $20.44$          & $20.78$          & 1 \\
+\midrule
+$\Delta$ (no-LTI $-$ baseline seed 42)            & $+0.003$ ($+0.1\%$) & $-0.01$ ($-0.05\%$) & $+0.02$ ($+0.1\%$) & --- \\
+$\Delta$ (no-LTI $-$ baseline 3-seed mean)        & $+0.003$ ($+0.1\%$) & $+0.09$ ($+0.4\%$) & $+0.11$ ($+0.5\%$) & --- \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Same-seed comparison shows the variant essentially identical to baseline: deltas within $\pm 0.1\%$ on every metric. An early-training drift was observed (the variant ran $+1.2\%$ above baseline on \pplwiki at step 5{,}000) but fully compressed by mid-training; from step $\sim 12{,}500$ onward the trajectories tracked within seed noise. Training remained stable throughout despite removing the gate's $\rho < 1$ guarantee --- gradient norm stayed bounded and no run diverged, consistent with vanilla deep transformers training stably with plain residual at modest depth.
+
+\paragraph{Interpretation.}
+The LTI gate is approximately vestigial in \cart{} at the Stage 2 budget. The early-training delta likely reflects an optimization-smoothing effect of the gate that disappears as both variants converge to similar minima. The spectral-radius emergence finding in Section~\ref{sec:spectral} stands as an observation about the gate's learned trajectory \emph{when it is present}, but the gate's perplexity contribution at $R{=}6$ is below the seed-noise threshold. \cart{} would behave essentially identically without the LTI gate at this scale and training budget.
+
+\subsection{Ablation LIE: Loop-Index Embedding Strip from Shared Baseline}
+\label{sec:abl_lie}
+
+\paragraph{Hypothesis.}
+In the shared-weight setting, LIE is the only mechanism by which the shared CoreBlock can know which iteration it is processing. Without it, all $R$ iterations are functionally identical apart from the evolving $h$ state. If the shared block was using the loop-index signal to differentiate iterations (e.g., coarse pattern matching in early loops, fine-grained refinement in late loops), removing LIE should hurt; if the block was producing essentially the same transformation at every iteration regardless of the index signal, LIE is vestigial.
+
+\paragraph{Intervention.}
+Set \texttt{disable\_lie=True}. The LIE module remains instantiated but its forward call is bypassed inside the loop: $h_\text{input}$ proceeds into the core block without the sinusoidal $\text{pe}[r]$ signal added. All other CART hyperparameters at baseline (shared core, cross-attention, $R{=}6$).
+
+\paragraph{Result.}
+
+\begin{table}[htbp]
+\centering
+\caption{LIE strip from shared baseline at $d{=}1024, R{=}6, P{=}6$, seed 42. Same-seed comparison cancels seed-to-seed variance. Lower is better.}
+\label{tab:abl_lie}
+\footnotesize
+\begin{tabular}{lcccc}
+\toprule
+ & \ppltiny & \pplwiki & \ppledu & seeds \\
+\midrule
+\cart{} baseline (3-seed mean)                    & $2.798 \pm 0.013$ & $20.35 \pm 0.08$ & $20.67 \pm 0.14$ & 3 \\
+\cart{} baseline (seed 42 only)                   & $2.798$           & $20.45$          & $20.76$          & 1 \\
+\cart{} no LIE (seed 42)                          & $2.815$           & $20.35$          & $20.84$          & 1 \\
+\midrule
+$\Delta$ (no-LIE $-$ baseline seed 42)            & $+0.017$ ($+0.6\%$) & $-0.10$ ($-0.5\%$) & $+0.08$ ($+0.4\%$) & --- \\
+$\Delta$ (no-LIE $-$ baseline 3-seed mean)        & $+0.017$ ($+0.6\%$) & $0.00$ ($0.0\%$) & $+0.17$ ($+0.8\%$) & --- \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Same-seed comparison shows the variant essentially identical to baseline; deltas oscillate around zero on every metric, with the variant landing exactly at the 3-seed baseline mean on \pplwiki. Across 26 matched eval steps and 610 matched train-log steps, the no-LIE variant tracked baseline within seed noise throughout, with no sign of the divergence that would be expected if the shared block were actively using the loop-index signal to differentiate iterations.
+
+\paragraph{Interpretation.}
+LIE is vestigial in \cart{}: removing the loop-index signal has no measurable effect on the trained model. This is the most architecturally consequential of the three machinery-component ablations --- without LIE, the shared CoreBlock has no mechanism to distinguish iteration 1 from iteration 6, so all $R$ iterations apply essentially the same transformation to the evolving $h$ state. The fact that this makes no measurable difference indicates the block was already producing essentially the same transformation at every iteration even when LIE was present, consistent with the $R$-flatness pattern observed in Section~\ref{sec:hyp_vs_outcome} (perplexities cluster within $\sim 1\%$ across $R \in \{6, 8, 10\}$). The shared-weight recurrent core is doing one type of refinement applied iteratively, not a sequence of differentiated computational steps.
+
+This completes the diagnostic battery. All three machinery components (HyperConnection, LTI gate, LIE) are vestigial in \cart{}'s shared-weight configuration. The residual $\sim 5\%$ gap to Dense 12L observed in Ablation Z (Section~\ref{sec:abl_unshared}) is therefore not attributable to any single machinery component; it lives in the broader heterogeneous prelude $\to$ anchor $\to$ core $\to$ coda architectural framing itself.
 
 % ============================================================
 \section{Discussion}
@@ -948,11 +1015,11 @@ We report five empirical results from the Stage 2 sweep and the diagnostic ablat
   \item Prelude depth $P$ dominates loop count $R$ in every condition tested in this study, including a $P{=}4$ versus $P{=}6$ spot-check at $d{=}1024, R{=}10$ where dropping two prelude layers costs $+0.92$ \pplwiki, larger than any $R$ choice at the same scale (Table~\ref{tab:stage2_results}).
   \item Stage 1 (3{,}000 steps) predicted that the benefit of recurrence depth would grow monotonically with model width, from $-0.25\%$ at $d{=}256$ to $+5.24\%$ at $d{=}1024$ ($R{=}2 \to R{=}8$ on \pplwiki). At Stage 2 (30{,}500 steps, $\sim 10\times$ the tokens), this trend reverses: $R{=}6$ is the best $R$ at every scale $d \geq 512$, and going to $R{=}10$ regresses by up to $1\%$. The Stage-1-derived expectation of growing $R$-benefit does not survive longer training.
   \item At the binding parameter-efficiency test ($d{=}1024$, $\sim 1$B tokens, Section~\ref{sec:hyp_vs_outcome}), \cart{} is competitive but does not win at parameter parity. Dense 7L (stored-parameter-matched, 3-seed mean) beats \cart{} $P{=}6, R{=}6$ by $1.1\%$ on \pplwiki, $2.0\%$ on \ppledu, and $1.8\%$ on \ppltiny. Dense 12L (effective-parameter-matched, 3-seed mean) beats \cart{} by $9.9\%$ on \pplwiki and $10.5\%$ on \ppledu (Table~\ref{tab:stage2_dense12l}). The shared-weight leverage thesis --- that effective parameters scale by a factor of $R$ at fixed stored parameters --- does not convert to language-modeling capacity at this scale and training budget.
-  \item The $d{=}1024$ \cart{}--Dense gap decomposes across several architectural mechanisms via diagnostic ablations (Section~\ref{sec:ablations}). Frozen $K, V$ is exonerated: recomputing $K, V$ from $h$ at every iteration ties baseline within the seed-noise band (Section~\ref{sec:abl_kv}). Recurrence beyond the first iteration contributes $\sim 1\%$: at $R{=}1$, \pplwiki rises by $1.1\%$ versus $R{=}6$ (Section~\ref{sec:abl_r1}). Shared weights cost $\sim 5\%$: unrolling the core into $R$ unique blocks improves \pplwiki by $5.6\%$ over baseline (Section~\ref{sec:abl_unshared}). The cross-attention-against-anchor structure is not the residual cap: replacing cross-attention with self-attention in the unshared variant produces no further improvement (Section~\ref{sec:abl_selfattn}). HyperConnection is approximately vestigial: removing its blend of prior states from shared \cart{} leaves \pplwiki essentially unchanged, confirming its softmax weights never moved meaningfully from the residual initialization (Section~\ref{sec:abl_hc}). \tbd{The LTI gate's contribution (Section~\ref{sec:abl_lti}) is being measured at the time of this preprint.} \cart{}'s recurrent-with-shared-weights formulation does not deliver the parameter-efficiency it was designed to deliver at this scale and training budget.
+  \item The $d{=}1024$ \cart{}--Dense gap decomposes across several architectural mechanisms via diagnostic ablations (Section~\ref{sec:ablations}). Frozen $K, V$ is exonerated: recomputing $K, V$ from $h$ at every iteration ties baseline within the seed-noise band (Section~\ref{sec:abl_kv}). Recurrence beyond the first iteration contributes $\sim 1\%$: at $R{=}1$, \pplwiki rises by $1.1\%$ versus $R{=}6$ (Section~\ref{sec:abl_r1}). Shared weights cost $\sim 5\%$: unrolling the core into $R$ unique blocks improves \pplwiki by $5.6\%$ over baseline (Section~\ref{sec:abl_unshared}). The cross-attention-against-anchor structure is not the residual cap: replacing cross-attention with self-attention in the unshared variant produces no further improvement (Section~\ref{sec:abl_selfattn}). All three machinery components of the recurrent core (HyperConnection, LTI gate, Loop Index Embedding) are vestigial in \cart{}'s shared-weight configuration: individually removing each leaves \pplwiki within seed noise of baseline (Sections~\ref{sec:abl_hc},~\ref{sec:abl_lti},~\ref{sec:abl_lie}). The residual $\sim 5\%$ gap to Dense 12L thus lives in the heterogeneous prelude $\to$ anchor $\to$ core $\to$ coda architectural framing itself, not in any single machinery component. \cart{}'s recurrent-with-shared-weights formulation does not deliver the parameter-efficiency it was designed to deliver at this scale and training budget.
 \end{enumerate}
 
 \paragraph{What remains unresolved.}
-Five completed ablations isolate the $d{=}1024$ \cart{}--Dense gap: $\sim 1\%$ from recurrence beyond $R{=}1$, $\sim 5\%$ from shared weights, with the residual $\sim 5\%$ reliably reproducing across both the cross-attention vs self-attention variant (Section~\ref{sec:abl_selfattn}) and the HyperConnection strip (Section~\ref{sec:abl_hc}). The LTI gate ablation is in progress (\tbd{Section~\ref{sec:abl_lti}}). If the LTI gate is also vestigial, the remaining cap is the heterogeneous architectural framing itself --- $P$ unique prelude layers $+$ $R$ shared-weight core iterations $+$ $1$ coda layer with the recurrence machinery wrapping only the middle $R$ --- versus Dense 12L's homogeneous 12-layer stack. A further ablation moving \cart{} toward a homogeneous architecture would test this, but does not naturally fit the recurrent-anchor paradigm and is left to future work. The combined picture supports a tempered conclusion: \cart{}'s recurrent-with-shared-weights formulation does not deliver the parameter-efficiency it was designed to deliver at $d{=}1024$ on $\sim 1$B tokens, but the architecture's other contributions --- deterministic latency, fixed VRAM, the spectral-radius emergence finding (Section~\ref{sec:spectral}), the Stage 1 $\to$ Stage 2 $R$-benefit reversal --- survive intact.
+Seven completed ablations isolate the $d{=}1024$ \cart{}--Dense gap: $\sim 1\%$ from recurrence beyond $R{=}1$, $\sim 5\%$ from shared weights, with the residual $\sim 5\%$ reliably reproducing across the cross-attention vs self-attention variant (Section~\ref{sec:abl_selfattn}) and remaining unchanged when any of HyperConnection (Section~\ref{sec:abl_hc}), the LTI gate (Section~\ref{sec:abl_lti}), or LIE (Section~\ref{sec:abl_lie}) is individually removed. The remaining cap is therefore not any single machinery component but the heterogeneous architectural framing itself --- $P$ unique prelude layers $+$ $R$ shared-weight core iterations $+$ $1$ coda layer with the recurrence machinery wrapping only the middle $R$ --- versus Dense 12L's homogeneous 12-layer stack. A further ablation moving \cart{} toward a homogeneous architecture would test this directly, but does not naturally fit the recurrent-anchor paradigm and is left to future work. The combined picture supports a tempered conclusion: \cart{}'s recurrent-with-shared-weights formulation does not deliver the parameter-efficiency it was designed to deliver at $d{=}1024$ on $\sim 1$B tokens. The architecture's contributions are real but require their comparison class to be stated explicitly. Relative to adaptive-halting recurrent designs~\citep{dehghani2018universal,gomez2026openmythos}, \cart{}'s fixed-$R$ schedule provides deterministic latency, fixed VRAM, and constant per-token FLOPs --- properties Dense transformers also share but adaptive variants forfeit. Relative to other shared-weight depth-recurrent architectures that recompute $K, V$ at each iteration~\citep{zeitoun2026hyperloop}, the once-computed frozen $K, V$ anchor saves the per-iteration $K, V$ projections, modestly reducing inference compute. The empirical findings --- the spectral-radius emergence into $[0.79, 0.83]$ (Section~\ref{sec:spectral}), the Stage 1 $\to$ Stage 2 $R$-benefit reversal (Table~\ref{tab:r_benefit_s2}), and the diagnostic decomposition of the $d{=}1024$ deficit (Section~\ref{sec:ablations}) --- stand independently of the parameter-efficiency claim.
 
 % ============================================================
 \section*{Code and Data Availability}
