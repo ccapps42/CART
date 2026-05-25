@@ -280,7 +280,13 @@ Each wrapper supports `--print-cmd-only` to register the DB row and print the un
 
 ## License
 
-MIT License. See [LICENSE](LICENSE) for details.
+This repository contains two distinct artifacts with separate licenses:
+
+- **Code** (everything under `model/`, `train/`, `sweep/`, `data/`, `eval/`, `plot/`, `figures/gen_*.py`, etc.) — released under the [MIT License](LICENSE). Free to use, modify, and redistribute with attribution.
+- **Paper** (the arXiv preprint at \[link forthcoming\]) — released under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). Free to share, adapt, and build on with attribution.
+- **Results database** (`results.db`) — released under CC BY 4.0 alongside the paper; treat as the empirical artifact accompanying the manuscript.
+
+Both licenses permit commercial use with attribution. The MIT/CC BY split follows the convention that software is licensed for software reuse and academic content is licensed for academic redistribution.
 
 ---
 
