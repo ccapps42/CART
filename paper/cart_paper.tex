@@ -980,17 +980,15 @@ Two notes for the eventual numeric $\phi$ computation: (1) our training token bu
 
 The Stage 2 sweep trains every configuration on $\sim 1$B tokens, which leaves $d{=}1024$ at $23$--$28\%$ of effective-Chinchilla and $40\%$ of stored-Chinchilla (Table~\ref{tab:chinchilla}). Several interpretive claims in this paper (the cross-scale scaling exponent, the per-$R$ comparison, the spectral radius behavior at large $d$) are sensitive to whether the largest models are near-converged or still in steep descent on the natural-language sets.
 
-To address this, a planned follow-up experiment resumes training from the best $d{=}1024$ $R{=}10$ checkpoint and continues for an additional 45{,}750 steps to a total of 2.5B tokens (exactly $20{:}1$ on stored parameters; $9$--$11{:}1$ on effective parameters depending on $R$). The additional training data is a fresh 1.5B-token chunk to be built from corpus shards not used in the Stage 2 build, preserving the single-pass, no-repetition property. We plan to resume training (rather than train from scratch) to isolate the effect of additional tokens on a known checkpoint and to keep total compute manageable ($\sim 14$ hours additional on a single RTX 3090).
-
-The planned extended-training run targets three specific questions:
+A natural follow-up would resume training from a saved $d{=}1024$ checkpoint and continue toward a Chinchilla-optimal token budget. Resuming from a known checkpoint (rather than training from scratch) would isolate the effect of additional tokens and keep additional compute manageable. Such an experiment would address three open questions:
 
 \begin{enumerate}[leftmargin=*, topsep=2pt, itemsep=1pt]
-  \item \textbf{Does perplexity continue to drop?} If \pplwiki{} at 2.5B tokens is meaningfully lower than at 1B (e.g., $> 5\%$ improvement), the Stage 2 numbers reported throughout this paper are lower bounds on asymptotic quality, and the cross-scale scaling exponents reported in Section~\ref{sec:scaling} would need to be re-anchored.
-  \item \textbf{Does the spectral radius continue to decay?} The corrected Stage 2 finding is that $\varrho$ settles in $[0.79, 0.83]$ rather than the Stage 1 value of $\approx 0.893$. Whether $\varrho$ at 2.5B tokens settles further or stabilizes would indicate whether the LTI gate has reached its trained value or is still adapting.
-  \item \textbf{Does $R$-benefit emerge with more training?} The Stage 1 prediction was that $R$-benefit grows with $d$. Stage 2 contradicts this within $R \in \{6, 8, 10\}$. If the extended-trained $d{=}1024$ model run at $R{=}10$ outperforms the same model run at $R{=}6$ (variable-$R$ inference, Section~\ref{sec:inference_R}), the recurrent-depth-as-useful-compute thesis would partially survive. If not, the architectural value of recurrence reduces to weight-sharing alone, and the diagnostic ablations of Section~\ref{sec:ablations} already show that contribution is negative at $d{=}1024$.
+  \item \textbf{Does perplexity continue to drop?} If \pplwiki{} at a Chinchilla-optimal token budget is meaningfully lower than at 1B (e.g., $> 5\%$ improvement), the Stage 2 numbers reported throughout this paper are lower bounds on asymptotic quality, and the cross-scale scaling exponents reported in Section~\ref{sec:scaling} would need to be re-anchored.
+  \item \textbf{Does the spectral radius continue to decay?} The corrected Stage 2 finding is that $\varrho$ settles in $[0.79, 0.83]$ rather than the Stage 1 value of $\approx 0.893$. Whether $\varrho$ at longer training settles further or stabilizes would indicate whether the LTI gate has reached its trained value or is still adapting.
+  \item \textbf{Does $R$-benefit emerge with more training?} The Stage 1 prediction was that $R$-benefit grows with $d$. Stage 2 contradicts this within $R \in \{6, 8, 10\}$. If a longer-trained $d{=}1024$ model run at $R{=}10$ outperforms the same model run at $R{=}6$ (variable-$R$ inference, Section~\ref{sec:inference_R}), the recurrent-depth-as-useful-compute thesis would partially survive. If not, the architectural value of recurrence reduces to weight-sharing alone, and the diagnostic ablations of Section~\ref{sec:ablations} already show that contribution is negative at $d{=}1024$.
 \end{enumerate}
 
-This experiment is not included in the present preprint; results would be reported in a future revision.
+We leave this experiment to future work.
 
 \subsection{Stage 1 as a Predictive Screen}
 
