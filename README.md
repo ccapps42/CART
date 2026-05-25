@@ -245,6 +245,24 @@ python plot/plot_sweep.py --db results.db
 
 ---
 
+## Diagnostic Ablations
+
+After Stage 2 completion, seven single-seed diagnostic ablations characterize the architectural contribution of each design choice at `d=1024, R=6, P=6, seed=42`. Each wrapper registers a config row with `hardware='ablation'` (the regular sweep orchestrator skips this hardware tag) and invokes `train/train_one.py` with the corresponding architectural flag.
+
+| Wrapper | Model type | What it tests |
+|---|---|---|
+| `train/run_unfrozen_kv_ablation.py` | `cart_unfrozenkv` | Recompute K, V from h each iteration instead of caching from prelude |
+| `train/run_r1_ablation.py` | `cart_r1` | Set R=1 — does recurrence beyond the first iteration add capacity? |
+| `train/run_unshared_core_ablation.py` | `cart_unshared` | R unique CoreBlocks instead of one shared block looped R times |
+| `train/run_self_attn_unshared_ablation.py` | `cart_selfattn_unshared` | Replace cross-attention with self-attention in the unshared core |
+| `train/run_no_hyper_ablation.py` | `cart_no_hyper` | Bypass HyperConnection's blend of prior hidden states |
+| `train/run_no_lti_ablation.py` | `cart_no_lti` | Bypass the LTI sigmoid gate; plain residual `h = h_input + transformer_out` |
+| `train/run_no_lie_ablation.py` | `cart_no_lie` | Skip the Loop Index Embedding signal |
+
+Each wrapper supports `--print-cmd-only` to register the DB row and print the underlying `train_one.py` command without launching the training. Final results for each ablation are stored in `results.db` alongside the main sweep and analyzed in the paper.
+
+---
+
 ## Citation
 
 *Paper forthcoming. Please check back for the arXiv link.*

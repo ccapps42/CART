@@ -10,8 +10,10 @@ data/hf_cache/
 # Model checkpoints
 checkpoints/
 
-# SQLite (commit after sweep completes)
+# SQLite — results.db is committed as the released artifact (~5 MB).
+# Ignore working files (WAL, shared memory) and any other .db files.
 *.db
+!results.db
 *.db-shm
 *.db-wal
 
