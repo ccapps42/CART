@@ -1026,6 +1026,50 @@ We report five empirical results from the Stage 2 sweep and the diagnostic ablat
 Seven completed ablations isolate the $d{=}1024$ \cart{}--Dense gap: $\sim 1\%$ from recurrence beyond $R{=}1$, $\sim 5\%$ from shared weights, with the residual $\sim 5\%$ reliably reproducing across the cross-attention vs self-attention variant (Section~\ref{sec:abl_selfattn}) and remaining unchanged when any of HyperConnection (Section~\ref{sec:abl_hc}), the LTI gate (Section~\ref{sec:abl_lti}), or LIE (Section~\ref{sec:abl_lie}) is individually removed. The remaining cap is therefore not any single machinery component but the heterogeneous architectural framing itself ($P$ unique prelude layers, $R$ shared-weight core iterations, and $1$ coda layer, with the recurrence machinery wrapping only the middle $R$) versus Dense 12L's homogeneous 12-layer stack. A further ablation moving \cart{} toward a homogeneous architecture would test this directly, but does not naturally fit the recurrent-anchor paradigm and is left to future work. The combined picture supports a tempered conclusion: \cart{}'s recurrent-with-shared-weights formulation does not deliver the parameter-efficiency it was designed to deliver at $d{=}1024$ on $\sim 1$B tokens. The architecture's contributions are real but require their comparison class to be stated explicitly. Relative to adaptive-halting recurrent designs~\citep{dehghani2018universal,gomez2026openmythos}, \cart{}'s fixed-$R$ schedule provides deterministic latency, fixed VRAM, and constant per-token FLOPs, properties Dense transformers also share but adaptive variants forfeit. Relative to other shared-weight depth-recurrent architectures that recompute $K, V$ at each iteration~\citep{zeitoun2026hyperloop}, the once-computed frozen $K, V$ anchor saves the per-iteration $K, V$ projections, modestly reducing inference compute. The empirical findings (the spectral-radius emergence into $[0.79, 0.83]$ in Section~\ref{sec:spectral}, the Stage 1 $\to$ Stage 2 $R$-benefit reversal in Table~\ref{tab:r_benefit_s2}, and the diagnostic decomposition of the $d{=}1024$ deficit in Section~\ref{sec:ablations}) stand independently of the parameter-efficiency claim.
 
 % ============================================================
+\section{Reproducibility Statement}
+\label{sec:reproducibility_statement}
+
+This section consolidates the information needed to reproduce the experiments reported in this paper. The code repository at \url{https://github.com/ccapps42/CART} contains the model implementation, the training and evaluation pipeline, the diagnostic-ablation wrappers, the figure-generation scripts, and the SQLite database (\texttt{results.db}) from which every numeric value in every table and figure was computed.
+
+\paragraph{Software environment.}
+Experiments use Python 3.14 on Windows 11. Package requirements (PyTorch, \texttt{bitsandbytes} for the 8-bit AdamW optimizer, \texttt{datasets} for HuggingFace data loading, \texttt{lm-evaluation-harness} for downstream benchmarks) are listed in the repository's \texttt{requirements.txt}. Attention is computed via \texttt{torch.nn.functional.scaled\_dot\_product\_attention} (Flash Attention path on Ampere). No custom CUDA kernels are used. \texttt{torch.compile} is not used because Triton is unavailable on Windows 11.
+
+\paragraph{Hardware.}
+Stage 1 (64 configurations) used a single RTX 3050 with 8 GB VRAM. Stage 2 (36 configurations across $d \in \{256, 512, 768, 1024\}$ and $R \in \{6, 8, 10\}$ with three seeds each, plus three reference-config $P{=}4$ runs at $d{=}1024, R{=}10$) used a single RTX 3090 with 24 GB VRAM. All seven diagnostic ablations (Sections~\ref{sec:abl_kv}--\ref{sec:abl_lie}) and both Dense baselines also used the RTX 3090. No multi-GPU, no cloud compute. Per-run wall-clock and throughput numbers are reported in Table~\ref{tab:throughput}.
+
+\paragraph{Random seeds.}
+The Stage 2 main sweep used three seeds: $\{42, 137, 271\}$. All single-seed diagnostic ablations used seed 42, matching one of the three baseline seeds so that same-seed comparisons cancel seed-to-seed variance. Per-seed standard deviations are characterized in Section~\ref{sec:repro}.
+
+\paragraph{Training data.}
+The Stage 2 training corpus is a fixed 999M-token mixed bin built from TinyStories ($30\%$), Wikipedia English ($30\%$), and FineWeb-Edu ($40\%$), interleaved in 1024-token chunks. The build script and the exact source-shard list are in \texttt{data/build\_bins.py}; given the same HuggingFace dataset snapshots, the build is deterministic. The corpus file (\texttt{data/stage2/stage2\_train.bin}, $\sim 2$ GB) is not committed to the repository because of its size, but is reproducible from the build script. Validation sets are held-out shards never used in training: \texttt{tinystories\_val.bin} (TinyStories validation split), \texttt{wikipedia\_val.bin} (Wikipedia shard 40 of 41), and \texttt{fineweb\_edu\_val.bin} (FineWeb-Edu shard 97 of 98).
+
+\paragraph{Training procedure.}
+Each Stage 2 configuration is reproduced by a single command:
+\begin{verbatim}
+python train/train_one.py --config-id <id> --db results.db \
+    --max-steps 30500 --seq-len 1024 \
+    --train-bin data/stage2/stage2_train.bin
+\end{verbatim}
+The configuration row (\texttt{configs} table in \texttt{results.db}) determines $d$, $R$, $P$, and seed. Fixed hyperparameters across all sweep runs: batch size 8, gradient accumulation 4 (effective batch $32{,}768$ tokens/step at \texttt{seq\_len}=1024), $30{,}500$ steps ($\sim 1$B tokens), AdamW8bit optimizer, peak learning rate $3 \times 10^{-4}$ with cosine decay to $3 \times 10^{-5}$, 100-step linear warmup, weight decay $0.1$, and gradient clip $1.0$. The complete hyperparameter set is in \texttt{train/train\_one.py} and the \texttt{sweep\_meta} table of the released database.
+
+For each diagnostic ablation, the architectural variant is selected via the wrapper script for that ablation (\texttt{train/run\_unshared\_core\_ablation.py}, \texttt{train/run\_no\_hyper\_ablation.py}, and similar). Each wrapper registers a configuration row with \texttt{hardware='ablation'} so the regular sweep orchestrator skips it, then invokes \texttt{train\_one.py} with the architectural flag for that ablation (for example, \texttt{--unshare-core}, \texttt{--disable-hyper}, \texttt{--disable-lti}).
+
+\paragraph{Evaluation.}
+Validation perplexity is computed every 500 training steps on 50 batches of size 1 at sequence length 1024 from each of the three validation sets. Downstream-benchmark evaluation (Table~\ref{tab:benchmarks}) uses the \texttt{lm-evaluation-harness} package~\citep{eval-harness} with default settings; the \texttt{wikitext} task is excluded because of a known harness hang in our environment. Variable-$R$ inference (Table~\ref{tab:variable_r}) is performed by modifying \texttt{model.config.n\_loops} between evaluation passes, with no fine-tuning between settings.
+
+\paragraph{Figures and tables.}
+Every numeric value in every table and every plotted point in every figure is computed from \texttt{results.db} by the scripts under \texttt{figures/gen\_*.py} and \texttt{plot/}. Running those scripts against the released database reproduces the paper artifacts.
+
+\paragraph{Known limitations of exact reproducibility.}
+Bit-exact reproducibility is not guaranteed across operating systems or CUDA versions because of floating-point non-determinism in GPU attention kernels and differences in BF16 reduction order. The following specific caveats apply to the released code:
+
+\begin{itemize}[leftmargin=*, topsep=2pt, itemsep=1pt]
+  \item The PyTorch DataLoader is configured with \texttt{num\_workers=0} because Windows does not support the multiprocessing fork used by the default worker loop. On Linux, raising the worker count is possible but may shift dataloader-side ordering at sub-batch granularity.
+  \item Gradient checkpointing is disabled because its interaction with HyperConnection's ring buffer and the frozen-$K, V$ design produced silent gradient corruption in earlier experiments. Re-enabling it would reduce VRAM at the cost of altered training dynamics.
+  \item \texttt{torch.compile} is not used because Triton is unavailable on Windows 11. On Linux, enabling it would yield modest training speedup but has not been validated against the training recipe used here.
+\end{itemize}
+
+% ============================================================
 \section*{Code and Data Availability}
 
 The complete \cart{} implementation, training and evaluation scripts, all figure-generation scripts, and the SQLite database (\texttt{results.db}) of every training run logged in this paper are released at \url{https://github.com/ccapps42/CART}. The database includes per-step train logs (loss, gradient norm, learning rate, spectral radius), per-eval validation perplexities on all three held-out sets, and full configuration provenance for every run, sufficient to regenerate every table and figure in this paper.
