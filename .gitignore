@@ -40,3 +40,13 @@ sweep/stage2_configs.json
 
 # Claude Code settings
 .claude/
+
+# Internal working docs and dev/maintenance scripts (not part of the public release)
+/CLAUDE.md
+/HANDOFF.md
+/Model_Paper_1_spec.md
+/Notes for Writing the Paper.md
+/Run baselines with.txt
+/preflight_d768.py
+/reset_*.py
+/test_phase*.py
