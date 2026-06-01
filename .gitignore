@@ -41,6 +41,11 @@ sweep/stage2_configs.json
 # Claude Code settings
 .claude/
 
+# Local submission staging (NOT for the public repo).
+# TMLR/ holds the double-blind anonymized build — must never be committed/pushed.
+/arXiv/
+/TMLR/
+
 # Internal working docs and dev/maintenance scripts (not part of the public release)
 /CLAUDE.md
 /HANDOFF.md
