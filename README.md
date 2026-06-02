@@ -22,7 +22,7 @@ Four findings stand on their own, independent of the parameter-efficiency claim:
 - **The Stage-1 → Stage-2 reversal.** A short-budget screen predicted R-benefit grows with width; at full training it reverses, and R=6 is best at every d ≥ 512.
 - Running more loops at inference than at training monotonically degrades downstream accuracy, so there is no test-time depth scaling to be had under this recipe.
 
-Full analysis is in the paper (link forthcoming). This README summarizes the architecture and the released artifacts.
+Full analysis is in the paper ([arXiv:2606.01495](https://arxiv.org/abs/2606.01495)). This README summarizes the architecture and the released artifacts.
 
 ---
 
@@ -301,14 +301,17 @@ Each wrapper supports `--print-cmd-only`. All ablation results are stored in `re
 
 ## Citation
 
-*Paper forthcoming. Please check back for the arXiv link.*
+Published on arXiv: **[arXiv:2606.01495](https://arxiv.org/abs/2606.01495)**.
 
 ```bibtex
 @article{capps2026cart,
-  title   = {CART: Context-Anchored Recurrent Transformer},
-  author  = {Capps, Chad A.},
-  year    = {2026},
-  url     = {https://github.com/ccapps42/CART}
+  title         = {CART: Context-Anchored Recurrent Transformer},
+  author        = {Capps, Chad A.},
+  year          = {2026},
+  eprint        = {2606.01495},
+  archivePrefix = {arXiv},
+  primaryClass  = {cs.LG},
+  url           = {https://arxiv.org/abs/2606.01495}
 }
 ```
 
@@ -319,7 +322,7 @@ Each wrapper supports `--print-cmd-only`. All ablation results are stored in `re
 This repository holds two distinct artifacts with separate licenses:
 
 - **Code** (everything under `model/`, `train/`, `sweep/`, `data/`, `eval/`, `plot/`, `figures/gen_*.py`, `tools/`): released under the [MIT License](LICENSE). Free to use, modify, and redistribute with attribution.
-- **Paper** (the arXiv preprint, link forthcoming): released under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/).
+- **Paper** ([arXiv:2606.01495](https://arxiv.org/abs/2606.01495)): released under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/).
 - **Results database** (`results.db`): released under CC BY 4.0 alongside the paper; treat it as the empirical artifact accompanying the manuscript.
 
 Both licenses permit commercial use with attribution.
